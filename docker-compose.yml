@@ -1,0 +1,153 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# docker-compose.yml — Acronis VM Monitor
+#
+# Servicios:
+#   acronis-monitor  →  Poller de la API de Acronis (acronis_monitor.py)
+#   acronis-api      →  Dashboard + REST API        (api_server.py)
+#
+# Volumen compartido:
+#   acronis-data     →  SQLite DB + monitor_status.json (persistidos en host)
+#
+# Uso rápido:
+#   cp .env.example .env   # editar credenciales
+#   docker compose up -d   # levantar todo
+#   docker compose logs -f # ver logs en vivo
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── 1. Monitor: consulta Acronis API y guarda cambios en SQLite ─────────────
+  acronis-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: acronis-vm-monitor:latest
+    container_name: acronis-monitor
+    command: python acronis_monitor.py
+    restart: unless-stopped
+
+    # Variables de entorno — se leen del archivo .env en el host
+    env_file:
+      - .env
+    environment:
+      - DATA_DIR=/app/data          # directorio compartido con el volumen
+
+    volumes:
+      - acronis-data:/app/data      # DB y JSON persistidos
+
+    # Sin puertos expuestos: este servicio solo escribe datos
+    networks:
+      - acronis-net
+
+    # Logging: rotar para evitar disco lleno
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+    # Healthcheck propio: verifica que el script no haya crasheado
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import acronis_db as db; db.get_all_machines()"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ── 2. API + Dashboard: sirve el frontend y la REST API ───────────────────
+  acronis-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: acronis-vm-monitor:latest
+    container_name: acronis-api
+    command: python api_server.py
+    restart: unless-stopped
+
+    env_file:
+      - .env
+    environment:
+      - DATA_DIR=/app/data          # mismo volumen que el monitor
+      - API_PORT=8085
+      - API_HOST=0.0.0.0
+
+    volumes:
+      - acronis-data:/app/data      # lee DB escrita por el monitor
+
+    ports:
+      - "8085:8085"                 # Dashboard disponible en http://localhost:8085
+
+    networks:
+      - acronis-net
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8085/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+    # La API depende de que el monitor haya iniciado (no necesariamente healthy)
+    depends_on:
+      - acronis-monitor
+
+  # ── 3. Motor de notificaciones: evalúa reglas y envía alertas ─────────────
+  acronis-notifier:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: acronis-vm-monitor:latest
+    container_name: acronis-notifier
+    command: python notification_engine.py
+    restart: unless-stopped
+
+    env_file:
+      - .env
+    environment:
+      - DATA_DIR=/app/data
+
+    volumes:
+      - acronis-data:/app/data   # lee máquinas escritas por el monitor
+
+    networks:
+      - acronis-net
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import acronis_db as db; db.get_notifications_summary()"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+    depends_on:
+      - acronis-monitor
+
+# ─────────────────────────── Volúmenes ────────────────────────────────────────
+volumes:
+  acronis-data:
+    driver: local
+    # Para mapear a un path específico en el host, usar:
+    # driver_opts:
+    #   type: none
+    #   o: bind
+    #   device: /ruta/en/host/acronis-data
+
+# ─────────────────────────── Red ──────────────────────────────────────────────
+networks:
+  acronis-net:
+    driver: bridge

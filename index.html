@@ -1,0 +1,1796 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Acronis VM Monitor - Dashboard</title>
+    <meta name="description" content="Dashboard de monitoreo y protección de máquinas virtuales Acronis para múltiples clientes.">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --bg:        #080e1a;
+            --surface:   #0f172a;
+            --card:      rgba(15,23,42,0.85);
+            --border:    rgba(255,255,255,0.07);
+            --accent:    #3b82f6;
+            --ok:        #10b981;
+            --warn:      #f59e0b;
+            --crit:      #ef4444;
+            --text:      #f1f5f9;
+            --muted:     #64748b;
+            --sidebar-w: 300px;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            overflow-x: hidden;
+        }
+
+        /* ── Sidebar ── */
+        #sidebar {
+            width: var(--sidebar-w);
+            min-height: 100vh;
+            background: linear-gradient(180deg, #0a1628 0%, #060d1a 100%);
+            border-right: 1px solid var(--border);
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            transition: transform .3s ease;
+            position: fixed;
+            left: 0; top: 0; bottom: 0;
+            z-index: 100;
+            overflow-y: auto;
+        }
+        .sidebar-logo {
+            padding: 24px 20px 16px;
+            border-bottom: 1px solid var(--border);
+        }
+        .sidebar-logo h2 {
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: .05em;
+            text-transform: uppercase;
+            background: linear-gradient(135deg, #60a5fa, #a78bfa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .sidebar-logo p { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+        .sidebar-section {
+            padding: 16px 12px;
+            border-bottom: 1px solid var(--border);
+        }
+        .sidebar-section-title {
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .1em;
+            color: var(--muted);
+            margin-bottom: 10px;
+            padding: 0 8px;
+        }
+
+        /* Nav items */
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 9px 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background .15s;
+            font-size: 13px;
+            color: var(--muted);
+            user-select: none;
+        }
+        .nav-item:hover, .nav-item.active {
+            background: rgba(59,130,246,.15);
+            color: var(--accent);
+        }
+        .nav-item i { width: 18px; text-align: center; }
+
+        /* VM toggles en sidebar */
+        .vm-toggle-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 8px;
+            border-radius: 6px;
+            transition: background .15s;
+            cursor: pointer;
+        }
+        .vm-toggle-item:hover { background: rgba(255,255,255,.04); }
+
+        .vm-toggle-label {
+            flex: 1;
+            min-width: 0;
+        }
+        .vm-toggle-name {
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .vm-toggle-tenant {
+            font-size: 10px;
+            color: var(--muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .vm-status-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .dot-ok     { background: var(--ok); box-shadow: 0 0 5px var(--ok); }
+        .dot-warning{ background: var(--warn); box-shadow: 0 0 5px var(--warn); }
+        .dot-critical{ background: var(--crit); box-shadow: 0 0 5px var(--crit); }
+        .dot-unknown{ background: var(--muted); }
+
+        /* Toggle switch */
+        .toggle-sw {
+            position: relative;
+            width: 32px; height: 18px;
+            flex-shrink: 0;
+        }
+        .toggle-sw input { opacity: 0; width: 0; height: 0; }
+        .toggle-slider {
+            position: absolute; inset: 0;
+            background: #1e293b;
+            border-radius: 18px;
+            cursor: pointer;
+            transition: background .2s;
+            border: 1px solid rgba(255,255,255,.1);
+        }
+        .toggle-slider::before {
+            content: '';
+            position: absolute;
+            width: 12px; height: 12px;
+            left: 2px; top: 2px;
+            background: var(--muted);
+            border-radius: 50%;
+            transition: transform .2s, background .2s;
+        }
+        .toggle-sw input:checked + .toggle-slider { background: rgba(59,130,246,.4); }
+        .toggle-sw input:checked + .toggle-slider::before {
+            transform: translateX(14px);
+            background: var(--accent);
+        }
+
+        /* ── Main content ── */
+        #main {
+            margin-left: var(--sidebar-w);
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+
+        /* Top bar */
+        #topbar {
+            background: rgba(8,14,26,.9);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border);
+            padding: 16px 28px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 50;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .topbar-left { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+        .topbar-title { font-size: 18px; font-weight: 700; }
+        .topbar-title span { color: var(--accent); }
+
+        /* Stat pills */
+        .stat-pills { display: flex; gap: 8px; flex-wrap: wrap; }
+        .stat-pill {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 12px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
+            border: 1px solid transparent;
+        }
+        .pill-total  { background: rgba(59,130,246,.15); border-color: rgba(59,130,246,.3); color: #60a5fa; }
+        .pill-ok     { background: rgba(16,185,129,.12); border-color: rgba(16,185,129,.3); color: #34d399; }
+        .pill-warn   { background: rgba(245,158,11,.12); border-color: rgba(245,158,11,.3); color: #fbbf24; }
+        .pill-crit   { background: rgba(239,68,68,.12);  border-color: rgba(239,68,68,.3);  color: #f87171; }
+
+        /* Search + filter bar */
+        .filters-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .search-wrap {
+            position: relative;
+        }
+        .search-wrap i {
+            position: absolute;
+            left: 10px; top: 50%;
+            transform: translateY(-50%);
+            color: var(--muted);
+            font-size: 12px;
+        }
+        .search-input, .filter-select {
+            background: rgba(15,23,42,.8);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 7px 12px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-family: inherit;
+            outline: none;
+            transition: border .2s;
+        }
+        .search-input { padding-left: 30px; width: 180px; }
+        .search-input:focus, .filter-select:focus { border-color: var(--accent); }
+        option { background: #0f172a; }
+
+        .view-btns { display: flex; gap: 4px; }
+        .view-btn {
+            padding: 7px 10px;
+            background: rgba(15,23,42,.8);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--muted);
+            cursor: pointer;
+            font-size: 13px;
+            transition: all .15s;
+        }
+        .view-btn.active, .view-btn:hover {
+            background: rgba(59,130,246,.2);
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        /* ── VM Grid ── */
+        #content { padding: 24px 28px; flex: 1; }
+
+        #vm-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 18px;
+            transition: all .3s;
+        }
+        #vm-grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+        #vm-grid.cols-1 { grid-template-columns: 1fr; }
+        #vm-grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
+
+        /* VM Card */
+        .vm-card {
+            background: var(--card);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 20px;
+            cursor: pointer;
+            transition: transform .2s, box-shadow .2s, border-color .2s;
+            position: relative;
+            overflow: hidden;
+        }
+        .vm-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 3px;
+            background: var(--ok);
+            border-radius: 14px 14px 0 0;
+        }
+        .vm-card.status-warning::before { background: var(--warn); }
+        .vm-card.status-critical::before { background: var(--crit); }
+        .vm-card.status-unknown::before  { background: var(--muted); }
+        .vm-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 40px rgba(0,0,0,.4);
+            border-color: rgba(59,130,246,.3);
+        }
+        .vm-card.pinned { border-color: rgba(168,85,247,.4); }
+        .vm-card.pinned::after {
+            content: '📌';
+            position: absolute;
+            top: 10px; right: 10px;
+            font-size: 12px;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 14px;
+        }
+        .card-name {
+            font-size: 15px;
+            font-weight: 700;
+            color: var(--text);
+            max-width: 65%;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .card-tenant {
+            font-size: 10px;
+            color: #60a5fa;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: .05em;
+            margin-top: 2px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 75%;
+        }
+        .badge {
+            padding: 3px 10px;
+            border-radius: 999px;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .05em;
+        }
+        .badge-ok       { background: rgba(16,185,129,.15); color: #34d399; border: 1px solid rgba(16,185,129,.3); }
+        .badge-warning  { background: rgba(245,158,11,.15); color: #fbbf24; border: 1px solid rgba(245,158,11,.3); }
+        .badge-critical { background: rgba(239,68,68,.15);  color: #f87171; border: 1px solid rgba(239,68,68,.3); }
+        .badge-unknown  { background: rgba(100,116,139,.15);color: #94a3b8; border: 1px solid rgba(100,116,139,.3);}
+
+        .card-metrics {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+        .metric-block { }
+        .metric-label {
+            font-size: 9px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .08em;
+            color: var(--muted);
+            margin-bottom: 3px;
+        }
+        .metric-value {
+            font-size: 13px;
+            color: var(--text);
+            font-weight: 500;
+        }
+        .cyberfit-bar {
+            height: 4px;
+            background: rgba(255,255,255,.08);
+            border-radius: 4px;
+            margin-top: 5px;
+            overflow: hidden;
+        }
+        .cyberfit-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width .6s ease;
+        }
+
+        .card-footer {
+            border-top: 1px solid var(--border);
+            padding-top: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 11px;
+            color: var(--muted);
+        }
+        .card-footer .next-val { color: #60a5fa; font-weight: 500; }
+
+        .alerts-list {
+            margin-top: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .alert-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 10px;
+            padding: 5px 8px;
+            border-radius: 6px;
+            background: rgba(239,68,68,.08);
+            color: #fca5a5;
+            border-left: 2px solid rgba(239,68,68,.4);
+        }
+
+        /* ── Vista lista ── */
+        #vm-grid.list-view {
+            grid-template-columns: 1fr;
+            gap: 6px;
+        }
+        #vm-grid.list-view .vm-card {
+            padding: 12px 20px;
+            border-radius: 10px;
+        }
+        #vm-grid.list-view .vm-card::before { height: 100%; width: 3px; top: 0; left: 0; right: auto; border-radius: 10px 0 0 10px; }
+        #vm-grid.list-view .card-metrics { display: flex; gap: 24px; margin: 8px 0; }
+        #vm-grid.list-view .alerts-list { flex-direction: row; flex-wrap: wrap; }
+
+        /* ── Modal Historial ── */
+        #modal-overlay {
+            display: none;
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,.7);
+            backdrop-filter: blur(4px);
+            z-index: 200;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        #modal-overlay.open { display: flex; }
+        #modal {
+            background: #0a1628;
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            width: 100%;
+            max-width: 720px;
+            max-height: 85vh;
+            overflow-y: auto;
+            padding: 28px;
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 20px;
+        }
+        .modal-close {
+            background: none;
+            border: none;
+            color: var(--muted);
+            cursor: pointer;
+            font-size: 18px;
+            padding: 4px;
+        }
+        .modal-close:hover { color: var(--text); }
+
+        .history-entry {
+            display: flex;
+            gap: 14px;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 12px;
+        }
+        .history-entry:last-child { border-bottom: none; }
+        .history-ts { color: var(--muted); min-width: 120px; }
+        .history-badge {
+            padding: 1px 8px;
+            border-radius: 999px;
+            font-size: 10px;
+            font-weight: 600;
+        }
+        .hb-info     { background: rgba(59,130,246,.15); color: #60a5fa; }
+        .hb-warning  { background: rgba(245,158,11,.15); color: #fbbf24; }
+        .hb-critical { background: rgba(239,68,68,.15);  color: #f87171; }
+        .history-desc { flex: 1; color: var(--text); }
+        .history-field { font-weight: 600; color: #a78bfa; }
+        .val-old { color: var(--muted); text-decoration: line-through; }
+        .val-new  { color: #34d399; }
+
+        /* ── Empty state ── */
+        .empty-state {
+            grid-column: 1 / -1;
+            text-align: center;
+            padding: 80px 20px;
+            color: var(--muted);
+        }
+        .empty-state i { font-size: 48px; margin-bottom: 16px; opacity: .3; }
+
+        /* ── Loader ── */
+        .pulse-dot {
+            display: inline-block;
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--accent);
+            animation: pulse 2s infinite;
+            margin-right: 6px;
+        }
+        @keyframes pulse {
+            0%,100% { opacity: 1; transform: scale(1); }
+            50%      { opacity: .4; transform: scale(.7); }
+        }
+
+        /* ── Scrollbar ── */
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 5px; }
+
+        /* ── Responsive ── */
+        @media (max-width: 900px) {
+            :root { --sidebar-w: 0px; }
+            #sidebar { transform: translateX(-300px); }
+            #sidebar.open { transform: translateX(0); width: 300px; }
+            #main { margin-left: 0; }
+            #vm-grid { grid-template-columns: 1fr; }
+        }
+
+        /* ── Toast notifications ── */
+        #toast-container {
+            position: fixed;
+            bottom: 24px; right: 24px;
+            display: flex; flex-direction: column; gap: 8px;
+            z-index: 300;
+        }
+        .toast {
+            background: #1e293b;
+            border: 1px solid var(--border);
+            padding: 12px 16px;
+            border-radius: 10px;
+            font-size: 12px;
+            max-width: 300px;
+            animation: slideIn .3s ease;
+            display: flex; align-items: center; gap: 8px;
+        }
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateX(20px); }
+            to   { opacity: 1; transform: translateX(0); }
+        }
+
+        /* History stats bar */
+        .hist-stats {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        .hist-stat {
+            flex: 1;
+            min-width: 100px;
+            background: rgba(255,255,255,.03);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px 14px;
+            text-align: center;
+        }
+        .hist-stat .num { font-size: 22px; font-weight: 700; }
+        .hist-stat .lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; margin-top: 2px; }
+
+        /* ── Canal config cards ── */
+        .channel-card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 24px;
+            margin-bottom: 20px;
+            transition: border-color .2s;
+        }
+        .channel-card:hover { border-color: rgba(59,130,246,.3); }
+        .channel-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 18px;
+        }
+        .channel-title {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 16px;
+            font-weight: 700;
+        }
+        .channel-icon {
+            width: 40px; height: 40px;
+            border-radius: 10px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 18px;
+        }
+        .channel-icon.tg  { background: rgba(0,136,204,.2); color: #29b6f6; }
+        .channel-icon.em  { background: rgba(234,88,12,.2);  color: #fb923c; }
+        .channel-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .status-pill {
+            padding: 3px 10px;
+            border-radius: 999px;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        .sp-on  { background: rgba(16,185,129,.15); color: #34d399; border: 1px solid rgba(16,185,129,.3); }
+        .sp-off { background: rgba(100,116,139,.12); color: #64748b; border: 1px solid rgba(100,116,139,.25); }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        .form-row.full { grid-template-columns: 1fr; }
+        .form-group { display: flex; flex-direction: column; gap: 5px; }
+        .form-label {
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .06em;
+            color: var(--muted);
+        }
+        .form-input {
+            background: rgba(15,23,42,.9);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-family: inherit;
+            outline: none;
+            transition: border .2s;
+            width: 100%;
+        }
+        .form-input:focus { border-color: var(--accent); }
+        .form-input::placeholder { color: var(--muted); font-size: 12px; }
+        .form-hint { font-size: 10px; color: var(--muted); margin-top: 2px; }
+
+        .channel-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 16px;
+            flex-wrap: wrap;
+        }
+        .btn {
+            padding: 8px 18px;
+            border: none;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            font-family: inherit;
+            transition: opacity .15s, transform .1s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .btn:hover    { opacity: .85; }
+        .btn:active   { transform: scale(.97); }
+        .btn-primary  { background: var(--accent); color: #fff; }
+        .btn-success  { background: var(--ok); color: #fff; }
+        .btn-ghost    { background: rgba(255,255,255,.06); color: var(--text); border: 1px solid var(--border); }
+        .btn-danger   { background: var(--crit); color: #fff; }
+        .btn:disabled { opacity: .4; cursor: not-allowed; }
+
+        /* Tabla de alertas activas */
+        .notif-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        .notif-table th {
+            text-align: left;
+            padding: 8px 12px;
+            font-size: 9px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .08em;
+            color: var(--muted);
+            border-bottom: 1px solid var(--border);
+        }
+        .notif-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid rgba(255,255,255,.04);
+            vertical-align: middle;
+        }
+        .notif-table tr:last-child td { border-bottom: none; }
+        .notif-table tr:hover td { background: rgba(255,255,255,.02); }
+        .notif-sev-crit { color: var(--crit); font-weight: 700; }
+        .notif-sev-warn { color: var(--warn); font-weight: 700; }
+        .notif-duration { color: var(--muted); font-size: 10px; }
+    </style>
+</head>
+<body>
+
+<!-- ═══════════════════ SIDEBAR ═══════════════════ -->
+<aside id="sidebar">
+    <div class="sidebar-logo">
+        <h2><i class="fas fa-shield-halved" style="margin-right:8px"></i>Acronis Monitor</h2>
+        <p>Panel de Control v2</p>
+    </div>
+
+    <div class="sidebar-section">
+        <div class="sidebar-section-title">Vistas</div>
+        <div class="nav-item active" id="nav-dashboard" onclick="setView('dashboard')">
+            <i class="fas fa-th-large"></i> Dashboard
+        </div>
+        <div class="nav-item" id="nav-history" onclick="setView('history')">
+            <i class="fas fa-clock-rotate-left"></i> Historial de Cambios
+        </div>
+        <div class="nav-item" id="nav-notifications" onclick="setView('notifications')">
+            <i class="fas fa-bell"></i> Notificaciones
+            <span id="notif-badge" style="margin-left:auto;background:var(--crit);color:#fff;border-radius:999px;font-size:9px;font-weight:700;padding:1px 6px;display:none;">0</span>
+        </div>
+        <div class="nav-item" id="nav-config" onclick="setView('config')">
+            <i class="fas fa-sliders"></i> Configuración
+        </div>
+    </div>
+
+    <div class="sidebar-section" id="sidebar-client-filter-wrap">
+        <div class="sidebar-section-title">Filtrar por Cliente</div>
+        <select id="sidebar-client-filter" class="filter-select" style="width:100%;" onchange="applyFilters()">
+            <option value="all">Todos los Clientes</option>
+        </select>
+    </div>
+
+    <div class="sidebar-section" style="flex:1; overflow-y:auto;">
+        <div class="sidebar-section-title" style="display:flex;justify-content:space-between;align-items:center;">
+            <span>Equipos Visibles</span>
+            <div style="display:flex;gap:4px;">
+                <button onclick="bulkNotify(true)" title="Telegram: Activar todas" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:10px;"><i class="fab fa-telegram"></i>+</button>
+                <button onclick="bulkNotify(false)" title="Telegram: Desactivar todas" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:10px;"><i class="fab fa-telegram"></i>—</button>
+                <div style="width:1px; background:var(--border); margin:0 4px;"></div>
+                <button onclick="bulkVisibility(true)" title="Visibilidad: Mostrar todas" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:10px;"><i class="fas fa-eye"></i></button>
+                <button onclick="bulkVisibility(false)" title="Visibilidad: Ocultar todas" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:10px;"><i class="fas fa-eye-slash"></i></button>
+                <span id="vm-count-badge" style="font-size:10px;color:var(--accent);margin-left:4px;">0</span>
+            </div>
+        </div>
+        <div id="vm-toggle-list" style="display:flex;flex-direction:column;gap:4px;">
+            <!-- Toggles de VMs se inyectan aquí -->
+        </div>
+    </div>
+</aside>
+
+<!-- ═══════════════════ MAIN ═══════════════════ -->
+<main id="main">
+    <!-- Top bar -->
+    <div id="topbar">
+        <div class="topbar-left">
+            <div>
+                <div class="topbar-title" id="view-title">Acronis <span>VM Monitor</span></div>
+                <div style="font-size:11px;color:var(--muted);margin-top:2px;">
+                    <span class="pulse-dot" id="pulse"></span>
+                    <span id="last-update">Cargando...</span>
+                </div>
+            </div>
+            <div class="stat-pills" id="stat-pills">
+                <span class="stat-pill pill-total"><i class="fas fa-server"></i> <span id="s-total">0</span></span>
+                <span class="stat-pill pill-ok">   <i class="fas fa-check"></i>  <span id="s-ok">0</span></span>
+                <span class="stat-pill pill-warn">  <i class="fas fa-triangle-exclamation"></i> <span id="s-warn">0</span></span>
+                <span class="stat-pill pill-crit">  <i class="fas fa-xmark-circle"></i> <span id="s-crit">0</span></span>
+            </div>
+        </div>
+        <div class="filters-bar">
+            <div class="search-wrap">
+                <i class="fas fa-magnifying-glass"></i>
+                <input id="search-input" type="text" class="search-input" placeholder="Buscar equipo..." oninput="applyFilters()">
+            </div>
+            <select id="status-filter" class="filter-select" onchange="applyFilters()">
+                <option value="all">Todos los estados</option>
+                <option value="ok">OK</option>
+                <option value="warning">Alertas</option>
+                <option value="critical">Críticos</option>
+            </select>
+            <div class="view-btns">
+                <button class="view-btn active" id="btn-grid" onclick="setColumns(3)" title="Grid 3 columnas"><i class="fas fa-th"></i></button>
+                <button class="view-btn" id="btn-grid2" onclick="setColumns(2)" title="Grid 2 columnas"><i class="fas fa-table-columns"></i></button>
+                <button class="view-btn" id="btn-list" onclick="setColumns(1)" title="Lista"><i class="fas fa-list"></i></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Content area -->
+    <div id="content">
+        <!-- === Dashboard view === -->
+        <div id="view-dashboard">
+            <div id="vm-grid" class="vm-grid">
+                <div class="empty-state">
+                    <i class="fas fa-satellite-dish"></i>
+                    <p>Conectando con la API del monitor...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- === History view === -->
+        <div id="view-history" style="display:none;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
+                <h2 style="font-size:18px;font-weight:700;">Historial de Cambios</h2>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <select id="hist-severity" class="filter-select" onchange="loadHistory()">
+                        <option value="">Todas las severidades</option>
+                        <option value="critical">Crítico</option>
+                        <option value="warning">Advertencia</option>
+                        <option value="info">Info</option>
+                    </select>
+                    <select id="hist-vm" class="filter-select" onchange="loadHistory()">
+                        <option value="">Todos los equipos</option>
+                    </select>
+                </div>
+            </div>
+            <div id="hist-stats" class="hist-stats"></div>
+            <div id="history-list"></div>
+        </div>
+
+        <!-- === Config view === -->
+        <div id="view-config" style="display:none;">
+            <h2 style="font-size:18px;font-weight:700;margin-bottom:20px;">Configuración del Dashboard</h2>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;">
+
+                <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;">
+                    <h3 style="font-size:14px;font-weight:600;margin-bottom:14px;color:#a78bfa;"><i class="fas fa-refresh" style="margin-right:6px"></i>Actualización</h3>
+                    <label style="font-size:12px;color:var(--muted);">Intervalo de refresco (segundos)</label>
+                    <input id="cfg-refresh" type="number" class="search-input" style="width:100%;margin-top:6px;padding-left:12px;" value="30" min="10" max="300">
+                </div>
+
+                <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;">
+                    <h3 style="font-size:14px;font-weight:600;margin-bottom:14px;color:#a78bfa;"><i class="fas fa-shield" style="margin-right:6px"></i>Umbral CyberFit</h3>
+                    <label style="font-size:12px;color:var(--muted);">Score mínimo aceptable (0-850)</label>
+                    <input id="cfg-cyberfit" type="number" class="search-input" style="width:100%;margin-top:6px;padding-left:12px;" value="500" min="0" max="850">
+                </div>
+
+                <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;">
+                    <h3 style="font-size:14px;font-weight:600;margin-bottom:14px;color:#a78bfa;"><i class="fas fa-th-large" style="margin-right:6px"></i>Columnas por defecto</h3>
+                    <label style="font-size:12px;color:var(--muted);">Columnas en la vista de grid</label>
+                    <select id="cfg-cols" class="filter-select" style="width:100%;margin-top:6px;">
+                        <option value="2">2 columnas</option>
+                        <option value="3" selected>3 columnas</option>
+                        <option value="4">4 columnas</option>
+                    </select>
+                </div>
+
+            </div>
+            <button onclick="saveConfig()" style="margin-top:18px;padding:10px 24px;background:var(--accent);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:600;cursor:pointer;">
+                <i class="fas fa-save" style="margin-right:6px"></i>Guardar Configuración
+            </button>
+        </div>
+
+        <!-- === Notificaciones view === -->
+        <div id="view-notifications" style="display:none;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;flex-wrap:wrap;gap:12px;">
+                <h2 style="font-size:18px;font-weight:700;">Canales de Notificación</h2>
+                <div id="notif-summary-pills" style="display:flex;gap:8px;"></div>
+            </div>
+
+            <!-- ── Telegram ─────────────────────────────────────── -->
+            <div class="channel-card" id="card-telegram">
+                <div class="channel-header">
+                    <div class="channel-title">
+                        <div class="channel-icon tg"><i class="fab fa-telegram"></i></div>
+                        <div>
+                            <div style="font-size:15px;font-weight:700;">Telegram</div>
+                            <div style="font-size:11px;color:var(--muted);">Bot API</div>
+                        </div>
+                    </div>
+                    <div class="channel-status">
+                        <span id="tg-status-pill" class="status-pill sp-off">Desactivado</span>
+                        <label class="toggle-sw" style="width:40px;height:22px;">
+                            <input type="checkbox" id="tg-enabled" onchange="onTgToggle()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group" style="grid-column:1/-1;">
+                        <label class="form-label">Bot Token</label>
+                        <input id="tg-token" type="password" class="form-input"
+                               placeholder="1234567890:AAH...tu_token_de_BotFather" autocomplete="off">
+                        <span class="form-hint">Créalo con <b>@BotFather</b> en Telegram → /newbot</span>
+                    </div>
+                </div>
+                <div class="form-row full">
+                    <div class="form-group">
+                        <label class="form-label">Chat IDs destinatarios</label>
+                        <input id="tg-chatids" type="text" class="form-input"
+                               placeholder="-1001234567890, -987654321">
+                        <span class="form-hint">IDs separados por coma. Pueden ser chats, grupos o canales.</span>
+                    </div>
+                </div>
+
+                <div class="channel-actions">
+                    <button class="btn btn-primary" onclick="saveTelegram()">
+                        <i class="fas fa-save"></i> Guardar
+                    </button>
+                    <button class="btn btn-success" id="tg-test-btn" onclick="testChannel('telegram')">
+                        <i class="fas fa-paper-plane"></i> Enviar prueba
+                    </button>
+                </div>
+            </div>
+
+            <!-- ── Email SMTP ────────────────────────────────────── -->
+            <div class="channel-card" id="card-email">
+                <div class="channel-header">
+                    <div class="channel-title">
+                        <div class="channel-icon em"><i class="fas fa-envelope"></i></div>
+                        <div>
+                            <div style="font-size:15px;font-weight:700;">Email SMTP</div>
+                            <div style="font-size:11px;color:var(--muted);">Gmail, Outlook, servidor propio...</div>
+                        </div>
+                    </div>
+                    <div class="channel-status">
+                        <span id="em-status-pill" class="status-pill sp-off">Desactivado</span>
+                        <label class="toggle-sw" style="width:40px;height:22px;">
+                            <input type="checkbox" id="em-enabled" onchange="onEmToggle()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Servidor SMTP</label>
+                        <input id="em-host" type="text" class="form-input"
+                               placeholder="smtp.gmail.com">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Puerto</label>
+                        <input id="em-port" type="number" class="form-input"
+                               placeholder="587" value="587">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Usuario</label>
+                        <input id="em-user" type="text" class="form-input"
+                               placeholder="usuario@empresa.com" autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Contraseña / App password</label>
+                        <input id="em-pass" type="password" class="form-input"
+                               placeholder="Tu contraseña o app password" autocomplete="new-password">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Remitente (From)</label>
+                        <input id="em-from" type="email" class="form-input"
+                               placeholder="Acronis Monitor <monitor@empresa.com>">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">TLS</label>
+                        <select id="em-tls" class="form-input">
+                            <option value="true" selected>STARTTLS (recomendado)</option>
+                            <option value="false">Sin TLS</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row full">
+                    <div class="form-group">
+                        <label class="form-label">Destinatarios (To)</label>
+                        <input id="em-to" type="text" class="form-input"
+                               placeholder="admin@empresa.com, jefe@empresa.com">
+                        <span class="form-hint">Emails separados por coma.</span>
+                    </div>
+                </div>
+
+                <div class="channel-actions">
+                    <button class="btn btn-primary" onclick="saveEmail()">
+                        <i class="fas fa-save"></i> Guardar
+                    </button>
+                    <button class="btn btn-success" id="em-test-btn" onclick="testChannel('email')">
+                        <i class="fas fa-envelope-circle-check"></i> Enviar prueba
+                    </button>
+                </div>
+            </div>
+
+            <!-- ── Alertas Activas ────────────────────────────────── -->
+            <div style="margin-top:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+                    <h3 style="font-size:15px;font-weight:700;"><i class="fas fa-triangle-exclamation" style="color:var(--warn);margin-right:8px;"></i>Alertas Activas</h3>
+                    <button class="btn btn-ghost" onclick="loadNotifView()" style="font-size:11px;padding:6px 12px;">
+                        <i class="fas fa-refresh"></i> Actualizar
+                    </button>
+                </div>
+                <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
+                    <div id="active-alerts-wrap" style="overflow-x:auto;">
+                        <p style="color:var(--muted);text-align:center;padding:30px;font-size:12px;">
+                            <i class="fas fa-spinner fa-spin"></i> Cargando...
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</main>
+
+<!-- ═══════════════════ MODAL: HISTORIAL VM ═══════════════════ -->
+<div id="modal-overlay" onclick="closeModal(event)">
+    <div id="modal">
+        <div class="modal-header">
+            <div>
+                <div id="modal-vm-name" style="font-size:18px;font-weight:700;"></div>
+                <div id="modal-vm-tenant" style="font-size:12px;color:#60a5fa;margin-top:4px;"></div>
+            </div>
+            <button class="modal-close" onclick="closeModalBtn()"><i class="fas fa-xmark"></i></button>
+        </div>
+        <div id="modal-body"></div>
+    </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<script>
+'use strict';
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// State
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+let allMachines   = [];   // todas las máquinas de la API
+let currentView   = 'dashboard';
+let refreshTimer  = null;
+let REFRESH_SECS  = 30;
+let CYBERFIT_THR  = 500;
+let currentCols   = 3;
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Utils
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function fmt(iso) {
+    if (!iso) return '<span style="color:var(--muted)">Nunca</span>';
+    const d = new Date(iso);
+    return d.toLocaleString('es-CL', {day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});
+}
+function fmtShort(iso) {
+    if (!iso) return 'N/A';
+    const d = new Date(iso);
+    return d.toLocaleString('es-CL', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+}
+function toast(msg, icon = 'fa-circle-check', color = '#34d399') {
+    const c = document.getElementById('toast-container');
+    const t = document.createElement('div');
+    t.className = 'toast';
+    t.innerHTML = `<i class="fas ${icon}" style="color:${color}"></i> ${msg}`;
+    c.appendChild(t);
+    setTimeout(() => t.remove(), 4000);
+}
+function statusClass(s) {
+    if (!s) return 'unknown';
+    const l = s.toLowerCase();
+    if (l === 'ok') return 'ok';
+    if (l === 'warning') return 'warning';
+    if (l === 'critical') return 'critical';
+    return 'unknown';
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Data fetch
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async function fetchMachines() {
+    // Intentar API backend primero, fallback a JSON estático
+    try {
+        const r = await fetch('/api/machines');
+        if (!r.ok) throw new Error('API not available');
+        const j = await r.json();
+        return { machines: j.data || [], tenants: j.tenants || {}, fromAPI: true };
+    } catch (_) {
+        // Fallback al JSON estático legacy
+        const r = await fetch('monitor_status.json');
+        const data = await r.json();
+        const tenants = {};
+        data.forEach(m => { if (m.tenant_id) tenants[m.tenant_id] = m.tenant_name; });
+        return { machines: data, tenants, fromAPI: false };
+    }
+}
+
+async function updateDashboard() {
+    try {
+        const { machines, tenants, fromAPI } = await fetchMachines();
+        allMachines = machines;
+
+        populateClientFilter(tenants);
+        populateSidebarToggles(machines);
+        populateHistVmFilter(machines);
+        applyFilters();
+
+        const now = new Date().toLocaleTimeString('es-CL');
+        document.getElementById('last-update').textContent =
+            `${fromAPI ? 'API' : 'JSON'} · ${now}`;
+        document.getElementById('pulse').style.background = 'var(--ok)';
+
+    } catch (err) {
+        console.error(err);
+        document.getElementById('last-update').textContent = 'Error de conexión';
+        document.getElementById('pulse').style.background = 'var(--crit)';
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Filters
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function applyFilters() {
+    const tenant   = document.getElementById('sidebar-client-filter').value;
+    const status   = document.getElementById('status-filter').value;
+    const search   = document.getElementById('search-input').value.toLowerCase().trim();
+
+    let filtered = allMachines.filter(m => {
+        // Solo visibles (si viene de API ya está filtrado, si es legacy mostramos todos)
+        const visible = m.visible !== undefined ? m.visible : 1;
+        if (!visible) return false;
+        if (tenant !== 'all' && m.tenant_id !== tenant) return false;
+        if (status !== 'all' && statusClass(m.protection_status) !== status) return false;
+        if (search && !m.name?.toLowerCase().includes(search) && !m.tenant_name?.toLowerCase().includes(search)) return false;
+        return true;
+    });
+
+    // Ordenar: primero pinned, luego dashboard_order, luego nombre
+    filtered.sort((a, b) => {
+        if (b.pinned !== a.pinned) return (b.pinned || 0) - (a.pinned || 0);
+        if (a.dashboard_order !== b.dashboard_order) return (a.dashboard_order || 9999) - (b.dashboard_order || 9999);
+        return (a.name || '').localeCompare(b.name || '');
+    });
+
+    renderGrid(filtered);
+    updateStats(filtered);
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Sidebar toggles (visibilidad)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function populateClientFilter(tenants) {
+    const sel = document.getElementById('sidebar-client-filter');
+    const cur = sel.value;
+    sel.innerHTML = '<option value="all">Todos los Clientes</option>';
+    Object.entries(tenants)
+        .sort((a,b) => a[1].localeCompare(b[1]))
+        .forEach(([id, name]) => {
+            const o = document.createElement('option');
+            o.value = id; o.textContent = name;
+            sel.appendChild(o);
+        });
+    sel.value = cur || 'all';
+}
+
+function populateSidebarToggles(machines) {
+    const list = document.getElementById('vm-toggle-list');
+    const visible = machines.filter(m => m.visible !== 0);
+    document.getElementById('vm-count-badge').textContent =
+        `${visible.length}/${machines.length}`;
+
+    list.innerHTML = '';
+    // Ordenar por tenant luego por nombre
+    const sorted = [...machines].sort((a,b) => {
+        const tc = (a.tenant_name||'').localeCompare(b.tenant_name||'');
+        return tc !== 0 ? tc : (a.name||'').localeCompare(b.name||'');
+    });
+
+    let lastTenant = null;
+    sorted.forEach(m => {
+        if (m.tenant_name !== lastTenant) {
+            lastTenant = m.tenant_name;
+            const sep = document.createElement('div');
+            sep.style.cssText = 'font-size:9px;color:var(--muted);padding:4px 8px 2px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-top:8px;';
+            sep.textContent = m.tenant_name || 'Sin cliente';
+            list.appendChild(sep);
+        }
+
+        const sc = statusClass(m.protection_status);
+        const el = document.createElement('div');
+        el.className = 'vm-toggle-item';
+        el.innerHTML = `
+            <div class="vm-status-dot dot-${sc}"></div>
+            <div class="vm-toggle-label">
+                <div class="vm-toggle-name" title="${m.name}">${m.name}</div>
+            </div>
+            <div style="display:flex; gap:6px;">
+                <label class="toggle-sw" title="${m.notify_telegram ? 'Desactivar Alertas Telegram' : 'Activar Alertas Telegram'}">
+                    <input type="checkbox" ${m.notify_telegram ? 'checked' : ''}
+                        onchange="toggleVMNotify('${m.vm_id}', this.checked)">
+                    <span class="toggle-slider" style="background: ${m.notify_telegram ? 'rgba(0,136,204,0.3)' : ''}"><i class="fab fa-telegram" style="font-size:8px; position:absolute; left:4px; top:3px; color:${m.notify_telegram ? '#29b6f6' : 'var(--muted)'}"></i></span>
+                </label>
+                <label class="toggle-sw" title="${m.visible !== 0 ? 'Ocultar del dashboard' : 'Mostrar en dashboard'}">
+                    <input type="checkbox" ${m.visible !== 0 ? 'checked' : ''}
+                        onchange="toggleVMVisibility('${m.vm_id}', this.checked)">
+                    <span class="toggle-slider"><i class="fas fa-eye" style="font-size:8px; position:absolute; left:4px; top:3px;"></i></span>
+                </label>
+            </div>
+        `;
+        list.appendChild(el);
+    });
+}
+
+async function toggleVMVisibility(vmId, visible) {
+    const m = allMachines.find(x => x.vm_id === vmId);
+    if (m) m.visible = visible ? 1 : 0;
+    applyFilters();
+    try {
+        await fetch(`/api/machines/${vmId}/visibility`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({visible})
+        });
+        toast(`${m?.name || vmId} ${visible ? 'visible' : 'ocultada'}`,
+              visible ? 'fa-eye' : 'fa-eye-slash', '#60a5fa');
+    } catch (_) {}
+    
+    // Actualizar contador
+    const vis = allMachines.filter(x => x.visible !== 0).length;
+    document.getElementById('vm-count-badge').textContent = `${vis}/${allMachines.length}`;
+}
+
+async function toggleVMNotify(vmId, notify) {
+    const m = allMachines.find(x => x.vm_id === vmId);
+    if (m) m.notify_telegram = notify ? 1 : 0;
+    try {
+        await fetch(`/api/machines/${vmId}/visibility`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({notify})
+        });
+        toast(`Alertas Telegram ${notify ? 'activadas' : 'desactivadas'} para ${m?.name || vmId}`,
+              'fa-telegram', notify ? '#29b6f6' : '#64748b');
+    } catch (_) {}
+}
+
+async function bulkNotify(notify) {
+    const tenant = document.getElementById('sidebar-client-filter').value;
+    const tenant_id = tenant === 'all' ? null : tenant;
+    try {
+        const r = await fetch('/api/machines/bulk-notify', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({notify, tenant_id})
+        });
+        if(r.ok) {
+            toast(`Alertas Telegram ${notify ? 'activadas' : 'desactivadas'} masivamente`, 'fa-telegram', notify ? '#29b6f6' : '#64748b');
+            allMachines.forEach(m => {
+                if (!tenant_id || m.tenant_id === tenant_id) m.notify_telegram = notify ? 1 : 0;
+            });
+            populateSidebarToggles(allMachines);
+        }
+    } catch(e) { console.error(e); }
+}
+
+async function bulkVisibility(visible) {
+    const tenant = document.getElementById('sidebar-client-filter').value;
+    const tenant_id = tenant === 'all' ? null : tenant;
+    try {
+        const r = await fetch('/api/machines/bulk-visibility', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({visible, tenant_id})
+        });
+        if(r.ok) {
+            toast(`Dashboard: Equipos ${visible ? 'mostrados' : 'ocultados'} masivamente`, visible ? 'fa-eye' : 'fa-eye-slash', '#a78bfa');
+            allMachines.forEach(m => {
+                if (!tenant_id || m.tenant_id === tenant_id) m.visible = visible ? 1 : 0;
+            });
+            populateSidebarToggles(allMachines);
+            applyFilters();
+        }
+    } catch(e) { console.error(e); }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Stats
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function updateStats(vms) {
+    document.getElementById('s-total').textContent = vms.length;
+    document.getElementById('s-ok'   ).textContent = vms.filter(v => statusClass(v.protection_status) === 'ok'      ).length;
+    document.getElementById('s-warn' ).textContent = vms.filter(v => statusClass(v.protection_status) === 'warning'  ).length;
+    document.getElementById('s-crit' ).textContent = vms.filter(v => statusClass(v.protection_status) === 'critical' ).length;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Grid render
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function renderGrid(vms) {
+    const grid = document.getElementById('vm-grid');
+    grid.innerHTML = '';
+    if (!vms.length) {
+        grid.innerHTML = '<div class="empty-state"><i class="fas fa-magnifying-glass"></i><p>No se encontraron equipos con los filtros actuales.</p></div>';
+        return;
+    }
+
+    vms.forEach(vm => {
+        const sc    = statusClass(vm.protection_status);
+        const score = parseInt(vm.cyberfit_score) || 0;
+        const pct   = Math.min(100, Math.round(score / 8.5));
+        const scoreColor = score >= CYBERFIT_THR ? 'var(--ok)' : (score > 300 ? 'var(--warn)' : 'var(--crit)');
+
+        const alertsHtml = (vm.alerts || []).length > 0
+            ? `<div class="alerts-list">${(vm.alerts).map(a =>
+                `<div class="alert-item"><i class="fas fa-triangle-exclamation"></i>${a}</div>`
+              ).join('')}</div>`
+            : '';
+
+        const card = document.createElement('div');
+        card.className = `vm-card status-${sc} ${vm.pinned ? 'pinned' : ''}`;
+        card.dataset.vmId = vm.vm_id;
+        card.onclick = () => openHistoryModal(vm);
+
+        card.innerHTML = `
+            <div class="card-header">
+                <div style="min-width:0;flex:1;">
+                    <div class="card-name" title="${vm.name}">${vm.name || 'Sin nombre'}</div>
+                    <div class="card-tenant" title="${vm.tenant_name}">${vm.tenant_name || ''}</div>
+                </div>
+                <span class="badge badge-${sc}">${vm.protection_status || 'unknown'}</span>
+            </div>
+            <div class="card-metrics">
+                <div class="metric-block">
+                    <div class="metric-label">Último Backup</div>
+                    <div class="metric-value" style="font-size:11px;">${fmt(vm.last_backup_success)}</div>
+                </div>
+                <div class="metric-block">
+                    <div class="metric-label">CyberFit Score</div>
+                    <div class="metric-value" style="color:${scoreColor};font-size:17px;font-weight:700;">${score}
+                        <span style="color:var(--muted);font-size:10px;font-weight:400;">/850</span>
+                    </div>
+                    <div class="cyberfit-bar">
+                        <div class="cyberfit-fill" style="width:${pct}%;background:${scoreColor};"></div>
+                    </div>
+                </div>
+                <div class="metric-block">
+                    <div class="metric-label">Plan de Protección</div>
+                    <div class="metric-value" style="font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${vm.protection_plan}">${vm.protection_plan || 'Sin plan'}</div>
+                </div>
+                <div class="metric-block">
+                    <div class="metric-label">Versión Agente</div>
+                    <div class="metric-value" style="font-size:11px;">${vm.agent_version || 'N/A'}</div>
+                </div>
+            </div>
+            <div class="card-footer">
+                <span>Próximo Backup</span>
+                <span class="next-val">${fmtShort(vm.next_backup)}</span>
+            </div>
+            ${alertsHtml}
+        `;
+
+        grid.appendChild(card);
+    });
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Modal: historial de VM
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async function openHistoryModal(vm) {
+    document.getElementById('modal-vm-name').textContent   = vm.name || vm.vm_id;
+    document.getElementById('modal-vm-tenant').textContent = vm.tenant_name || '';
+    document.getElementById('modal-body').innerHTML =
+        '<p style="color:var(--muted);font-size:13px;text-align:center;padding:30px"><i class="fas fa-spinner fa-spin"></i> Cargando historial...</p>';
+    document.getElementById('modal-overlay').classList.add('open');
+
+    try {
+        const r = await fetch(`/api/history/${vm.vm_id}?limit=60`);
+        const j = await r.json();
+        renderModalHistory(j.data || []);
+    } catch (_) {
+        document.getElementById('modal-body').innerHTML =
+            '<p style="color:var(--muted);font-size:12px;text-align:center;padding:30px">Historial disponible solo con el servidor API activo.</p>';
+    }
+}
+
+function renderModalHistory(entries) {
+    const body = document.getElementById('modal-body');
+    if (!entries.length) {
+        body.innerHTML = '<p style="color:var(--muted);font-size:12px;text-align:center;padding:30px">Sin historial de cambios registrado.</p>';
+        return;
+    }
+    body.innerHTML = entries.map(e => `
+        <div class="history-entry">
+            <div class="history-ts">${fmt(e.timestamp)}</div>
+            <div>
+                <span class="history-badge hb-${e.severity}">${e.severity}</span>
+            </div>
+            <div class="history-desc">
+                <span class="history-field">${e.field_changed}</span>
+                ${e.old_value ? `<span class="val-old"> ${e.old_value}</span>` : ''}
+                ${e.new_value ? `<span class="val-new"> → ${e.new_value}</span>` : ''}
+            </div>
+        </div>
+    `).join('');
+}
+
+function closeModal(e) {
+    if (e.target === document.getElementById('modal-overlay'))
+        document.getElementById('modal-overlay').classList.remove('open');
+}
+function closeModalBtn() {
+    document.getElementById('modal-overlay').classList.remove('open');
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// History view
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function populateHistVmFilter(machines) {
+    const sel = document.getElementById('hist-vm');
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">Todos los equipos</option>';
+    const sorted = [...machines].sort((a,b) => (a.name||'').localeCompare(b.name||''));
+    sorted.forEach(m => {
+        const o = document.createElement('option');
+        o.value = m.vm_id;
+        o.textContent = `${m.name} (${m.tenant_name || ''})`;
+        sel.appendChild(o);
+    });
+    sel.value = cur || '';
+}
+
+async function loadHistory() {
+    const sev  = document.getElementById('hist-severity').value;
+    const vmId = document.getElementById('hist-vm').value;
+    const list = document.getElementById('history-list');
+    list.innerHTML = '<p style="color:var(--muted);font-size:12px;text-align:center;padding:30px"><i class="fas fa-spinner fa-spin"></i></p>';
+
+    // Stats
+    try {
+        const rs = await fetch('/api/history/summary');
+        const js = await rs.json();
+        const s  = js.data || {};
+        document.getElementById('hist-stats').innerHTML = `
+            <div class="hist-stat">
+                <div class="num" style="color:#60a5fa">${s.total||0}</div>
+                <div class="lbl">Total cambios</div>
+            </div>
+            <div class="hist-stat">
+                <div class="num" style="color:var(--crit)">${s.critical||0}</div>
+                <div class="lbl">Críticos</div>
+            </div>
+            <div class="hist-stat">
+                <div class="num" style="color:var(--warn)">${s.warning||0}</div>
+                <div class="lbl">Advertencias</div>
+            </div>
+            <div class="hist-stat">
+                <div class="num" style="color:var(--ok)">${s.last_24h||0}</div>
+                <div class="lbl">Últimas 24h</div>
+            </div>
+        `;
+    } catch(_) {}
+
+    try {
+        let url = `/api/history?limit=200`;
+        if (sev)  url += `&severity=${sev}`;
+        if (vmId) url += `&vm_id=${vmId}`;
+        const r = await fetch(url);
+        const j = await r.json();
+        const entries = j.data || [];
+
+        if (!entries.length) {
+            list.innerHTML = '<p style="color:var(--muted);font-size:12px;text-align:center;padding:30px">Sin eventos registrados.</p>';
+            return;
+        }
+
+        list.innerHTML = entries.map(e => `
+            <div class="history-entry">
+                <div class="history-ts">${fmt(e.timestamp)}</div>
+                <div style="min-width:70px;">
+                    <span class="history-badge hb-${e.severity}">${e.severity}</span>
+                </div>
+                <div class="history-desc">
+                    <strong style="color:#93c5fd">${e.vm_name || e.vm_id}</strong>
+                    <span style="color:var(--muted)"> (${e.tenant_name||''})</span>
+                    &nbsp;·&nbsp;
+                    <span class="history-field">${e.field_changed}</span>
+                    ${e.old_value ? `<span class="val-old"> ${e.old_value}</span>` : ''}
+                    ${e.new_value ? `<span class="val-new"> → ${e.new_value}</span>` : ''}
+                </div>
+            </div>
+        `).join('');
+    } catch (_) {
+        list.innerHTML = '<p style="color:var(--muted);text-align:center;padding:30px;font-size:12px">El servidor API no está disponible. Inicia api_server.py para ver el historial.</p>';
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Config
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async function loadConfig() {
+    try {
+        const r = await fetch('/api/config');
+        const j = await r.json();
+        const c = j.data || {};
+        if (c.refresh_interval)   document.getElementById('cfg-refresh').value  = c.refresh_interval;
+        if (c.cyberfit_threshold) { document.getElementById('cfg-cyberfit').value = c.cyberfit_threshold; CYBERFIT_THR = c.cyberfit_threshold; }
+        if (c.columns)            { document.getElementById('cfg-cols').value = c.columns; setColumns(c.columns, false); }
+        if (c.refresh_interval)   { REFRESH_SECS = c.refresh_interval; restartTimer(); }
+    } catch(_) {}
+}
+
+async function saveConfig() {
+    const cfg = {
+        refresh_interval:   parseInt(document.getElementById('cfg-refresh').value)   || 30,
+        cyberfit_threshold: parseInt(document.getElementById('cfg-cyberfit').value) || 500,
+        columns:            parseInt(document.getElementById('cfg-cols').value)       || 3,
+    };
+    CYBERFIT_THR = cfg.cyberfit_threshold;
+    REFRESH_SECS = cfg.refresh_interval;
+    setColumns(cfg.columns, false);
+    restartTimer();
+
+    try {
+        await fetch('/api/config', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(cfg)
+        });
+        toast('Configuración guardada', 'fa-floppy-disk', '#34d399');
+    } catch(_) {
+        toast('Config local aplicada (API no disponible)', 'fa-circle-info', '#fbbf24');
+    }
+    applyFilters(); // re-render con nuevo threshold
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// View navigation
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function setView(view) {
+    currentView = view;
+    ['dashboard','history','config','notifications'].forEach(v => {
+        const el = document.getElementById(`view-${v}`);
+        const nav = document.getElementById(`nav-${v}`);
+        if (el)  el.style.display  = v === view ? '' : 'none';
+        if (nav) nav.classList.toggle('active', v === view);
+    });
+    const titles = {
+        dashboard:     'VM Monitor',
+        history:       'Historial',
+        config:        'Configuración',
+        notifications: 'Notificaciones'
+    };
+    document.getElementById('view-title').innerHTML =
+        `Acronis <span>${titles[view] || view}</span>`;
+
+    if (view === 'history')       loadHistory();
+    if (view === 'config')        loadConfig();
+    if (view === 'notifications') loadNotifView();
+}
+
+function setColumns(n, persist = true) {
+    currentCols = n;
+    const grid = document.getElementById('vm-grid');
+    grid.className = 'vm-grid';
+    grid.classList.add(n == 1 ? 'list-view' : `cols-${n}`);
+    grid.style.gridTemplateColumns = n == 1 ? '1fr' : `repeat(${n}, 1fr)`;
+
+    ['btn-grid','btn-grid2','btn-list'].forEach(id =>
+        document.getElementById(id).classList.remove('active'));
+    const ids = {3:'btn-grid', 2:'btn-grid2', 1:'btn-list', 4:'btn-grid'};
+    if (ids[n]) document.getElementById(ids[n]).classList.add('active');
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Notification channels
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async function loadNotifView() {
+    // Load channel configs
+    try {
+        const r = await fetch('/api/channels');
+        const j = await r.json();
+        const { telegram, email } = j.data || {};
+
+        if (telegram) {
+            document.getElementById('tg-enabled').checked = !!telegram.enabled;
+            document.getElementById('tg-token').value     = telegram.bot_token || '';
+            document.getElementById('tg-chatids').value   = (telegram.chat_ids || []).join(', ');
+            updateTgPill(!!telegram.enabled);
+        }
+        if (email) {
+            document.getElementById('em-enabled').checked = !!email.enabled;
+            document.getElementById('em-host').value  = email.smtp_host || '';
+            document.getElementById('em-port').value  = email.smtp_port || 587;
+            document.getElementById('em-user').value  = email.smtp_user || '';
+            document.getElementById('em-pass').value  = email.smtp_pass || '';
+            document.getElementById('em-from').value  = email.from_email || '';
+            document.getElementById('em-to').value    = (email.to_emails || []).join(', ');
+            document.getElementById('em-tls').value   = email.use_tls ? 'true' : 'false';
+            updateEmPill(!!email.enabled);
+        }
+    } catch(e) { console.error(e); }
+
+    // Load active notifications
+    await refreshActiveAlerts();
+
+    // Update badge
+    await refreshNotifBadge();
+}
+
+async function refreshActiveAlerts() {
+    const wrap = document.getElementById('active-alerts-wrap');
+    try {
+        const r = await fetch('/api/notifications');
+        const j = await r.json();
+        const alerts  = j.data || [];
+        const summary = j.summary || {};
+
+        // Summary pills
+        document.getElementById('notif-summary-pills').innerHTML = `
+            <span class="stat-pill pill-crit">🔴 ${summary.critical||0} críticos</span>
+            <span class="stat-pill pill-warn">🟡 ${summary.warning||0} warnings</span>
+            <span class="stat-pill pill-ok">✅ ${summary.resolved_24h||0} resueltos hoy</span>
+        `;
+
+        if (!alerts.length) {
+            wrap.innerHTML = '<p style="color:var(--ok);text-align:center;padding:30px;font-size:13px;">✅ No hay alertas activas</p>';
+            return;
+        }
+
+        const alertTypeMap = {
+            'BACKUP_NO_RECORD':   '⚫ Sin registro de backup',
+            'BACKUP_OVERDUE_25H': '🟡 Backup >25h',
+            'BACKUP_OVERDUE_48H': '🔴 Backup >48h',
+            'CYBERFIT_LOW':       '🛡️ CyberFit bajo',
+            'STATUS_CRITICAL':    '🔴 Estado crítico',
+            'STATUS_WARNING':     '🟡 Estado warning',
+            'ANTIMALWARE_OVERDUE':'🔵 Antimalware vencido',
+        };
+
+        const rows = alerts.map(a => {
+            const sev   = a.severity === 'critical' ? 'notif-sev-crit' : 'notif-sev-warn';
+            const atype = alertTypeMap[a.alert_type] || a.alert_type;
+            const dur   = durationSince(a.first_sent);
+            const sends = a.send_count || 1;
+            return `<tr>
+                <td><span class="${sev}">${a.vm_name || a.vm_id}</span><br>
+                    <span style="color:var(--muted);font-size:10px">${a.tenant_name||''}</span></td>
+                <td>${atype}</td>
+                <td class="${sev}">${a.severity?.toUpperCase()}</td>
+                <td class="notif-duration">${dur}</td>
+                <td style="color:var(--muted);font-size:10px">×${sends}</td>
+                <td>
+                    <button class="btn btn-ghost" style="font-size:10px;padding:4px 10px;"
+                            onclick="acknowledgeAlert(${a.id})">
+                        <i class="fas fa-check"></i> Atendido
+                    </button>
+                </td>
+            </tr>`;
+        }).join('');
+
+        wrap.innerHTML = `<table class="notif-table">
+            <thead><tr>
+                <th>Equipo</th>
+                <th>Tipo de alerta</th>
+                <th>Severidad</th>
+                <th>Duración</th>
+                <th>Envíos</th>
+                <th></th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+        </table>`;
+    } catch(e) {
+        wrap.innerHTML = `<p style="color:var(--crit);text-align:center;padding:20px;font-size:12px;">Error al cargar alertas: ${e.message}</p>`;
+    }
+}
+
+function durationSince(iso) {
+    if (!iso) return '—';
+    const h = (Date.now() - new Date(iso).getTime()) / 3600000;
+    if (h < 1) return `${Math.round(h*60)}m`;
+    if (h < 24) return `${h.toFixed(1)}h`;
+    return `${(h/24).toFixed(1)}d`;
+}
+
+async function acknowledgeAlert(id) {
+    try {
+        const r = await fetch(`/api/notifications/${id}/acknowledge`, { method: 'POST' });
+        if (r.ok) {
+            toast('Alerta marcada como atendida', 'fa-check-circle', '#34d399');
+            await refreshActiveAlerts();
+            await refreshNotifBadge();
+        }
+    } catch(e) { toast('Error al actualizar', 'fa-circle-xmark', '#ef4444'); }
+}
+
+async function refreshNotifBadge() {
+    try {
+        const r = await fetch('/api/notifications/summary');
+        const j = await r.json();
+        const count = (j.data?.active || 0);
+        const badge = document.getElementById('notif-badge');
+        badge.textContent = count;
+        badge.style.display = count > 0 ? '' : 'none';
+    } catch(_) {}
+}
+
+// ─── Telegram ─────────────────────────────────────────────────────
+function onTgToggle() {
+    updateTgPill(document.getElementById('tg-enabled').checked);
+}
+function updateTgPill(on) {
+    const pill = document.getElementById('tg-status-pill');
+    pill.textContent = on ? 'Activo' : 'Desactivado';
+    pill.className = `status-pill ${on ? 'sp-on' : 'sp-off'}`;
+}
+
+async function saveTelegram() {
+    const payload = {
+        enabled:   document.getElementById('tg-enabled').checked,
+        bot_token: document.getElementById('tg-token').value.trim(),
+        chat_ids:  document.getElementById('tg-chatids').value.trim(),
+    };
+    try {
+        const r = await fetch('/api/channels/telegram', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        if (r.ok) toast('Telegram guardado ✅', 'fa-telegram', '#29b6f6');
+        else       toast('Error al guardar', 'fa-circle-xmark', '#ef4444');
+    } catch(e) { toast('Error de red', 'fa-circle-xmark', '#ef4444'); }
+}
+
+// ─── Email ────────────────────────────────────────────────────────
+function onEmToggle() {
+    updateEmPill(document.getElementById('em-enabled').checked);
+}
+function updateEmPill(on) {
+    const pill = document.getElementById('em-status-pill');
+    pill.textContent = on ? 'Activo' : 'Desactivado';
+    pill.className = `status-pill ${on ? 'sp-on' : 'sp-off'}`;
+}
+
+async function saveEmail() {
+    const payload = {
+        enabled:    document.getElementById('em-enabled').checked,
+        smtp_host:  document.getElementById('em-host').value.trim(),
+        smtp_port:  parseInt(document.getElementById('em-port').value) || 587,
+        smtp_user:  document.getElementById('em-user').value.trim(),
+        smtp_pass:  document.getElementById('em-pass').value,
+        from_email: document.getElementById('em-from').value.trim(),
+        to_emails:  document.getElementById('em-to').value.trim(),
+        use_tls:    document.getElementById('em-tls').value === 'true',
+    };
+    try {
+        const r = await fetch('/api/channels/email', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        if (r.ok) toast('Email SMTP guardado ✅', 'fa-envelope', '#fb923c');
+        else       toast('Error al guardar', 'fa-circle-xmark', '#ef4444');
+    } catch(e) { toast('Error de red', 'fa-circle-xmark', '#ef4444'); }
+}
+
+// ─── Test channel ─────────────────────────────────────────────────
+async function testChannel(ch) {
+    const btnId = ch === 'telegram' ? 'tg-test-btn' : 'em-test-btn';
+    const btn   = document.getElementById(btnId);
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enviando...';
+    try {
+        const r = await fetch(`/api/channels/${ch}/test`, { method: 'POST' });
+        const j = await r.json();
+        if (j.ok) {
+            const dest = j.data?.sent_to?.join(', ') || '';
+            toast(`✅ Prueba enviada${dest ? ` a ${dest}` : ''}`, 'fa-circle-check', '#34d399');
+        } else {
+            toast(`❌ ${j.error}`, 'fa-circle-xmark', '#ef4444');
+        }
+    } catch(e) {
+        toast(`Error: ${e.message}`, 'fa-circle-xmark', '#ef4444');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = ch === 'telegram'
+            ? '<i class="fas fa-paper-plane"></i> Enviar prueba'
+            : '<i class="fas fa-envelope-circle-check"></i> Enviar prueba';
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Timer
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function restartTimer() {
+    if (refreshTimer) clearInterval(refreshTimer);
+    refreshTimer = setInterval(() => {
+        updateDashboard();
+        refreshNotifBadge();
+    }, REFRESH_SECS * 1000);
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Init
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+(async function init() {
+    await loadConfig();
+    await updateDashboard();
+    await refreshNotifBadge();
+    restartTimer();
+})();
+</script>
+</body>
+</html>

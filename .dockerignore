@@ -1,0 +1,36 @@
+# ── Archivos de datos generados (persisten en volumen Docker) ──
+acronis_monitor.db
+monitor_status.json
+acronis_full_inventory.json
+all_tenants.json
+auth_response.txt
+*.db-shm
+*.db-wal
+
+# ── Credenciales ───────────────────────────────────────────────
+.env
+
+# ── Python ─────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# ── Entornos virtuales ─────────────────────────────────────────
+venv/
+env/
+.venv/
+ENV/
+
+# ── IDE y OS ───────────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+Thumbs.db
