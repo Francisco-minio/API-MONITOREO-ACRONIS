@@ -51,7 +51,9 @@ def init_db():
                 dashboard_order     INTEGER DEFAULT 9999,
                 first_seen          TEXT,
                 last_seen           TEXT,
-                last_changed        TEXT                -- última vez que algo cambió
+                last_changed        TEXT,               -- última vez que algo cambió
+                muted_until         TEXT,               -- ISO timestamp hasta cuándo silenciar
+                tags                TEXT DEFAULT '[]'   -- JSON array de etiquetas
             );
 
             -- Historial: un registro cada vez que cambia algo relevante
@@ -111,9 +113,18 @@ def init_db():
         # Migración: asegurar que existe notify_telegram
         try:
             conn.execute("ALTER TABLE machines ADD COLUMN notify_telegram INTEGER DEFAULT 0")
-            print("[DB] Columna notify_telegram agregada exitosamente")
         except sqlite3.OperationalError:
             pass # Ya existe
+
+        try:
+            conn.execute("ALTER TABLE machines ADD COLUMN muted_until TEXT")
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            conn.execute("ALTER TABLE machines ADD COLUMN tags TEXT DEFAULT '[]'")
+        except sqlite3.OperationalError:
+            pass
     print(f"[DB] Base de datos inicializada en: {DB_PATH}")
 
 # ─────────────────────────── Máquinas ──────────────────────────────────────
@@ -260,7 +271,7 @@ def get_machines_for_dashboard() -> List[dict]:
         return result
 
 
-def set_machine_visibility(vm_id: str, visible: bool, pinned: bool = None, notify: bool = None):
+def set_machine_visibility(vm_id: str, visible: bool, pinned: bool = None, notify: bool = None, muted_until: str = None):
     with get_conn() as conn:
         if pinned is not None:
             conn.execute(
@@ -276,6 +287,11 @@ def set_machine_visibility(vm_id: str, visible: bool, pinned: bool = None, notif
             conn.execute(
                 "UPDATE machines SET notify_telegram=? WHERE vm_id=?",
                 (1 if notify else 0, vm_id)
+            )
+        if muted_until is not None:
+            conn.execute(
+                "UPDATE machines SET muted_until=? WHERE vm_id=?",
+                (muted_until, vm_id)
             )
 
 
