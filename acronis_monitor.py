@@ -87,7 +87,6 @@ class AcronisMonitor:
 
         while True:
             params = {
-                'type':               'resource.machine',
                 'include_attributes': 'true',
                 'limit':              100
             }

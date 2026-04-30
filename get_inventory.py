@@ -38,7 +38,6 @@ class AcronisInventory:
         while True:
             params = {
                 'include_attributes': 'true',
-                'type': 'resource.machine',
                 'limit': 100
             }
             if cursor:
