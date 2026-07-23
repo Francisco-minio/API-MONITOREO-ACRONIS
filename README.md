@@ -16,23 +16,24 @@ Este proyecto permite visualizar en tiempo real el estado de **todos** los recur
 *   **Etiquetas y Clasificación**: Soporte para etiquetas personalizadas para organizar recursos por criticidad o función.
 *   **Historial de Cambios**: Registro detallado de cada modificación detectada en el inventario.
 
-### 🔔 Motor de Notificaciones (Telegram)
+### 🔔 Motor de Notificaciones (Multicanal: Telegram + Email SMTP)
 *   **Alertas Personalizadas**: 
     *   Backup atrasado (>25h advertencia, >48h crítico).
     *   Equipos sin registro histórico de backups.
     *   Cambios de estado (Critical/Warning/OK) en la protección de Acronis.
     *   Puntuación de CyberFit por debajo del umbral configurado.
+*   **Envío Multicanal**: Despacho simultáneo por Telegram y Email HTML formateado con diseño oscuro acorde al Dashboard.
 *   **Fuentes Híbridas**: Combina reglas propias de negocio con alertas nativas de la API de Acronis (amenazas detectadas, ransomware, agentes offline).
 *   **Anti-Spam e Inteligencia**:
     *   Lógica de re-notificación programable (por defecto cada 6 horas).
-    *   Resolución automática de alertas enviada a Telegram cuando el problema se soluciona.
+    *   Resolución automática de alertas enviada a Telegram y Email cuando el problema se soluciona.
     *   **Silenciado Temporal**: Capacidad de silenciar alertas de equipos específicos hasta una fecha determinada.
 
 ### 🏗️ Arquitectura del Sistema
 El sistema se divide en 4 componentes principales:
 1.  **`acronis_monitor.py` (Poller)**: Consulta la API de Acronis, normaliza datos de múltiples tipos de recursos y detecta cambios.
 2.  **`acronis_db.py` (Capa de Datos)**: Gestiona una base de datos SQLite con migraciones automáticas y soporte para metadatos avanzados.
-3.  **`notification_engine.py` (Worker)**: Evalúa las reglas de negocio, procesa alertas nativas y gestiona el canal de Telegram.
+3.  **`notification_engine.py` (Worker)**: Evalúa las reglas de negocio, procesa alertas nativas y gestiona el envío multicanal por Telegram y Email SMTP.
 4.  **`api_server.py` (REST API)**: Sirve los datos al frontend y gestiona las preferencias de configuración y visibilidad.
 
 ---
@@ -78,12 +79,12 @@ sudo docker-compose up -d --build
 
 ---
 
-## ⚙️ Configuración de Alertas (Telegram)
+## ⚙️ Configuración de Alertas (Telegram y Email SMTP)
 
-1.  Accede a la pestaña **Configuración** en el Dashboard.
-2.  Ingresa tu **Bot Token** de Telegram y los **Chat IDs** de destino.
-3.  Activa el canal y guarda los cambios.
-4.  En la barra lateral, activa el icono de Telegram para las máquinas o servicios que deseas monitorear activamente.
+1.  Accede a la pestaña **Canales** en el Dashboard (`http://localhost:8085`).
+2.  **Telegram**: Ingresa tu **Bot Token** y los **Chat IDs** de destino. Activa el canal y guarda.
+3.  **Email (SMTP)**: Configura el servidor SMTP (host, puerto, usuario, contraseña, remitente y destinatarios). Activa el canal y presiona **Probar canal** para verificar la entrega.
+4.  En la vista principal, activa el toggle de alertas para las máquinas o servicios que deseas monitorear activamente.
 
 ---
 

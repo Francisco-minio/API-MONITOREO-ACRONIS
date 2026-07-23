@@ -34,6 +34,9 @@ import sys
 import time
 import json
 import requests
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from typing import Optional, Tuple
 from datetime import datetime, timezone, timedelta
 from base64 import b64encode
@@ -48,6 +51,14 @@ load_dotenv()
 
 TELEGRAM_BOT_TOKEN    = os.getenv('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_IDS     = [c.strip() for c in os.getenv('TELEGRAM_CHAT_ID', '').split(',') if c.strip()]
+
+SMTP_HOST             = os.getenv('SMTP_HOST', '')
+SMTP_PORT             = int(os.getenv('SMTP_PORT', 587))
+SMTP_USER             = os.getenv('SMTP_USER', '')
+SMTP_PASS             = os.getenv('SMTP_PASS', '')
+FROM_EMAIL            = os.getenv('FROM_EMAIL', '')
+TO_EMAILS             = [e.strip() for e in os.getenv('TO_EMAILS', '').split(',') if e.strip()]
+SMTP_USE_TLS          = os.getenv('SMTP_USE_TLS', 'true').lower() == 'true'
 
 CLIENT_ID             = os.getenv('ACRONIS_CLIENT_ID', '')
 CLIENT_SECRET         = os.getenv('ACRONIS_CLIENT_SECRET', '')
@@ -116,6 +127,70 @@ def send_telegram(message: str, force_cfg: dict = None) -> bool:
     return success
 
 
+# ─────────────────────────── Email SMTP ────────────────────────────────────
+
+def send_email(subject: str, html_body: str, force_cfg: dict = None) -> bool:
+    """Envía correo a todos los destinatarios configurados en DB o .env."""
+    if DRY_RUN:
+        print(f"[DRY_RUN] Email Subject: {subject}\n[DRY_RUN] Email Body Preview:\n{html_body[:200]}...\n")
+        return True
+
+    cfg = force_cfg or db.get_channel_config('email')
+
+    host      = cfg.get('smtp_host') or SMTP_HOST
+    port      = int(cfg.get('smtp_port') or SMTP_PORT or 587)
+    user      = cfg.get('smtp_user') or SMTP_USER
+    pwd       = cfg.get('smtp_pass') or SMTP_PASS
+    from_addr = cfg.get('from_email') or FROM_EMAIL or user
+    to_addrs  = cfg.get('to_emails') or TO_EMAILS
+    use_tls   = cfg.get('use_tls') if cfg.get('use_tls') is not None else SMTP_USE_TLS
+    enabled   = cfg.get('enabled')
+
+    if enabled is None:
+        enabled = bool(host and to_addrs)
+
+    if not enabled:
+        return False
+
+    if not host or not to_addrs:
+        print("[WARN] Email habilitado pero no configurado (SMTP Host/Destinatarios vacíos)")
+        return False
+
+    try:
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = subject
+        msg['From']    = from_addr
+        msg['To']      = ', '.join(to_addrs)
+        msg.attach(MIMEText(html_body, 'html'))
+
+        if port == 465:
+            with smtplib.SMTP_SSL(host, port, timeout=15) as srv:
+                if user and pwd:
+                    srv.login(user, pwd)
+                srv.sendmail(from_addr, to_addrs, msg.as_string())
+        else:
+            with smtplib.SMTP(host, port, timeout=15) as srv:
+                if use_tls:
+                    srv.starttls()
+                if user and pwd:
+                    srv.login(user, pwd)
+                srv.sendmail(from_addr, to_addrs, msg.as_string())
+        return True
+    except Exception as e:
+        print(f"[EMAIL ERROR] {e}")
+        return False
+
+
+def dispatch_notifications(vm_notify: bool, msg_tg: str, subj_em: str, html_em: str) -> bool:
+    """Envía notificaciones a través de todos los canales activos (Telegram, Email)."""
+    if not vm_notify:
+        return False
+
+    tg_sent = send_telegram(msg_tg)
+    em_sent = send_email(subj_em, html_em)
+    return tg_sent or em_sent
+
+
 def now_chile() -> datetime:
     """Retorna la hora actual en Chile (UTC-4)."""
     return datetime.now(timezone(timedelta(hours=-4)))
@@ -125,9 +200,6 @@ def fmt_ts(iso: Optional[str]) -> str:
     if not iso:
         return "Nunca"
     try:
-        # Chile is UTC-4/-3. Let's use fixed -4 as standard for now, 
-        # or use ZoneInfo if we want to be professional (requires tzdata).
-        # We'll use a timedelta offset of -4 for simplicity in 3.9.6.
         tz_chile = timezone(timedelta(hours=-4))
         dt = datetime.fromisoformat(iso.replace('Z', '+00:00'))
         dt_local = dt.astimezone(tz_chile)
@@ -255,6 +327,167 @@ def msg_acronis_alert(alert: dict) -> str:
     )
 
 
+# ─────────────────────────── Plantillas Email HTML ─────────────────────────
+
+def render_email_html(title: str, badge_text: str, badge_color: str, rows_html: str) -> str:
+    ts_now = now_chile().strftime('%d/%m/%Y %H:%M')
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin:0;padding:0;background-color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#f1f5f9;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#0f172a;padding:24px 12px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" style="max-width:560px;background-color:#1e293b;border-radius:12px;border:1px solid #334155;overflow:hidden;box-shadow:0 10px 25px rgba(0,0,0,0.5);">
+          <!-- Header -->
+          <tr>
+            <td style="padding:20px 24px;background-color:#0f172a;border-bottom:1px solid #334155;">
+              <table width="100%" cellspacing="0" cellpadding="0">
+                <tr>
+                  <td>
+                    <span style="font-size:18px;font-weight:bold;color:#38bdf8;">🛡️ Acronis VM Monitor</span>
+                  </td>
+                  <td align="right">
+                    <span style="display:inline-block;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:bold;color:#ffffff;background-color:{badge_color};letter-spacing:0.5px;">
+                      {badge_text}
+                    </span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:24px;">
+              <h2 style="margin:0 0 18px 0;font-size:20px;font-weight:700;color:#f8fafc;">{title}</h2>
+              <table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+                {rows_html}
+              </table>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:16px 24px;background-color:#0f172a;border-top:1px solid #334155;font-size:12px;color:#94a3b8;text-align:center;">
+              Monitoreo de Infraestructura Acronis &bull; {ts_now} (Chile)
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"""
+
+
+def _email_row(label: str, val: str, is_highlight: bool = False) -> str:
+    val_style = "font-weight:bold;color:#f8fafc;" if is_highlight else "color:#cbd5e1;"
+    return f"""
+    <tr>
+      <td style="padding:8px 0;border-bottom:1px solid #334155;font-size:14px;color:#94a3b8;width:35%;">{label}</td>
+      <td style="padding:8px 0;border-bottom:1px solid #334155;font-size:14px;{val_style}">{val}</td>
+    </tr>"""
+
+
+def msg_email_backup_warn(vm: dict, hours: float, escalated: bool = False) -> Tuple[str, str]:
+    is_crit     = hours >= BACKUP_CRIT_H
+    badge_text  = "CRÍTICO" if is_crit else "ADVERTENCIA"
+    badge_color = "#ef4444" if is_crit else "#f59e0b"
+    title       = f"⚠️ ESCALADO: Backup atrasado" if escalated else f"Alerta de Backup ({badge_text})"
+    subj        = f"{'🔴' if is_crit else '🟡'} [{badge_text}] Backup atrasado ({hours:.0f}h) – {vm['name']}"
+
+    rows = (
+        _email_row("Equipo / VM", vm['name'], True) +
+        _email_row("Cliente / Tenant", vm.get('tenant_name', 'N/A')) +
+        _email_row("Tiempo sin backup", f"<span style='color:{badge_color};font-weight:bold;'>{hours:.0f} horas</span>") +
+        _email_row("Último backup", fmt_ts(vm.get('last_backup_success'))) +
+        _email_row("Plan de Protección", vm.get('protection_plan', 'N/A')) +
+        _email_row("Estado Protección", (vm.get('protection_status') or 'unknown').upper())
+    )
+    return subj, render_email_html(title, badge_text, badge_color, rows)
+
+
+def msg_email_backup_no_record(vm: dict) -> Tuple[str, str]:
+    subj = f"⚫ [ALERTA] Sin registro de backup – {vm['name']}"
+    rows = (
+        _email_row("Equipo / VM", vm['name'], True) +
+        _email_row("Cliente / Tenant", vm.get('tenant_name', 'N/A')) +
+        _email_row("Detalle", "<span style='color:#ef4444;font-weight:bold;'>Sin registros de backup exitoso</span>") +
+        _email_row("Plan de Protección", vm.get('protection_plan', 'Sin Plan'))
+    )
+    return subj, render_email_html("Equipo Sin Registro de Backup", "SIN BACKUP", "#64748b", rows)
+
+
+def msg_email_cyberfit(vm: dict) -> Tuple[str, str]:
+    score = vm.get('cyberfit_score', 0)
+    subj  = f"🛡️ [ADVERTENCIA] CyberFit Score Bajo ({score}/850) – {vm['name']}"
+    rows  = (
+        _email_row("Equipo / VM", vm['name'], True) +
+        _email_row("Cliente / Tenant", vm.get('tenant_name', 'N/A')) +
+        _email_row("CyberFit Score", f"<span style='color:#f59e0b;font-weight:bold;'>{score} / 850</span>") +
+        _email_row("Umbral Mínimo", str(CYBERFIT_THR))
+    )
+    return subj, render_email_html("CyberFit Score Bajo Umbral", "CYBERFIT", "#f59e0b", rows)
+
+
+def msg_email_status(vm: dict) -> Tuple[str, str]:
+    st          = (vm.get('protection_status') or '').upper()
+    is_crit     = st == 'CRITICAL'
+    badge_color = "#ef4444" if is_crit else "#f59e0b"
+    subj        = f"{'🔴' if is_crit else '🟡'} [{st}] Estado de Protección – {vm['name']}"
+    rows        = (
+        _email_row("Equipo / VM", vm['name'], True) +
+        _email_row("Cliente / Tenant", vm.get('tenant_name', 'N/A')) +
+        _email_row("Estado Protección", f"<span style='color:{badge_color};font-weight:bold;'>{st}</span>") +
+        _email_row("Plan de Protección", vm.get('protection_plan', 'N/A')) +
+        _email_row("Último Backup", fmt_ts(vm.get('last_backup_success')))
+    )
+    return subj, render_email_html(f"Estado de Protección {st}", st, badge_color, rows)
+
+
+def msg_email_resolved(vm_name: str, tenant: str, alert_type: str, first_sent: str) -> Tuple[str, str]:
+    labels = {
+        AlertType.BACKUP_WARN:      'Backup sin ejecutar >25h',
+        AlertType.BACKUP_CRIT:      'Backup sin ejecutar >48h',
+        AlertType.BACKUP_NO_RECORD: 'Sin registro de backup',
+        AlertType.CYBERFIT_LOW:     'CyberFit Score bajo',
+        AlertType.STATUS_CRITICAL:  'Estado crítico',
+        AlertType.STATUS_WARNING:   'Estado advertencia',
+        AlertType.AM_OVERDUE:       'Antimalware vencido',
+    }
+    label = labels.get(alert_type, alert_type)
+    subj  = f"✅ [RESUELTO] {label} – {vm_name}"
+    rows  = (
+        _email_row("Equipo / VM", vm_name, True) +
+        _email_row("Cliente / Tenant", tenant) +
+        _email_row("Alerta Resuelta", label) +
+        _email_row("Activa Desde", fmt_ts(first_sent))
+    )
+    return subj, render_email_html("Alerta Resuelta Exitosamente", "RESUELTO", "#10b981", rows)
+
+
+def msg_email_acronis_alert(alert: dict) -> Tuple[str, str]:
+    sev         = alert.get('severity', 'info').upper()
+    is_crit     = sev in ('CRITICAL', 'HIGH')
+    badge_color = "#ef4444" if is_crit else "#f59e0b"
+    atype       = alert.get('type', 'N/A')
+    rname       = alert.get('details', {}).get('resource_name') or 'N/A'
+    tname       = alert.get('details', {}).get('tenant_name')   or 'N/A'
+    desc        = alert.get('details', {}).get('description')   or atype
+    subj        = f"{'🔴' if is_crit else '🟡'} [ACRONIS {sev}] {atype} – {rname}"
+
+    rows = (
+        _email_row("Recurso", rname, True) +
+        _email_row("Cliente / Tenant", tname) +
+        _email_row("Tipo Alerta", f"<code>{atype}</code>") +
+        _email_row("Severidad", f"<span style='color:{badge_color};font-weight:bold;'>{sev}</span>") +
+        _email_row("Descripción", desc)
+    )
+    return subj, render_email_html(f"Alerta Nativa Acronis ({sev})", sev, badge_color, rows)
+
+
 # ─────────────────────────── Lógica de decisión ────────────────────────────
 
 def should_send(vm_id: str, alert_type: str, new_severity: str, now_iso: str) -> Tuple[bool, bool]:
@@ -284,7 +517,7 @@ def should_send(vm_id: str, alert_type: str, new_severity: str, now_iso: str) ->
 def check_own_rules(machines: list, now_iso: str) -> int:
     """
     Evalúa las reglas sobre los datos de la DB y registra en DB siempre.
-    Envía por Telegram SOLO si la VM tiene 'notify_telegram'=1.
+    Envía notificaciones multicanal (Telegram, Email) según configuración.
     """
     sent = 0
 
@@ -292,7 +525,7 @@ def check_own_rules(machines: list, now_iso: str) -> int:
         vm_id   = vm.get('vm_id')
         vm_name = vm.get('name', vm_id)
         tenant  = vm.get('tenant_name', '')
-        notify  = bool(vm.get('notify_telegram')) # Preferencia individual
+        notify  = bool(vm.get('notify_telegram')) # Preferencia de notificación
 
         if not vm_id:
             continue
@@ -306,13 +539,13 @@ def check_own_rules(machines: list, now_iso: str) -> int:
             if snd:
                 db.upsert_notification(vm_id, vm_name, tenant,
                                        AlertType.BACKUP_NO_RECORD, 'warning', now_iso)
-                if notify:
-                    send_telegram(msg_backup_no_record(vm))
+                sub_em, html_em = msg_email_backup_no_record(vm)
+                dispatch_notifications(notify, msg_backup_no_record(vm), sub_em, html_em)
                 sent += 1
         else:
             if db.resolve_notification(vm_id, AlertType.BACKUP_NO_RECORD, now_iso):
-                if notify:
-                    send_telegram(msg_resolved(vm_name, tenant, AlertType.BACKUP_NO_RECORD, now_iso))
+                sub_em, html_em = msg_email_resolved(vm_name, tenant, AlertType.BACKUP_NO_RECORD, now_iso)
+                dispatch_notifications(notify, msg_resolved(vm_name, tenant, AlertType.BACKUP_NO_RECORD, now_iso), sub_em, html_em)
 
         # ── 2. Backup atrasado ──────────────────────────────────────────────
         hours = hours_since(vm.get('last_backup_success'))
@@ -323,8 +556,8 @@ def check_own_rules(machines: list, now_iso: str) -> int:
                     db.upsert_notification(vm_id, vm_name, tenant,
                                            AlertType.BACKUP_CRIT, 'critical', now_iso,
                                            extra_data={'hours': round(hours, 1)})
-                    if notify:
-                        send_telegram(msg_backup_warn(vm, hours, escalated=esc))
+                    sub_em, html_em = msg_email_backup_warn(vm, hours, escalated=esc)
+                    dispatch_notifications(notify, msg_backup_warn(vm, hours, escalated=esc), sub_em, html_em)
                     sent += 1
                 db.resolve_notification(vm_id, AlertType.BACKUP_WARN, now_iso)
 
@@ -334,15 +567,15 @@ def check_own_rules(machines: list, now_iso: str) -> int:
                     db.upsert_notification(vm_id, vm_name, tenant,
                                            AlertType.BACKUP_WARN, 'warning', now_iso,
                                            extra_data={'hours': round(hours, 1)})
-                    if notify:
-                        send_telegram(msg_backup_warn(vm, hours))
+                    sub_em, html_em = msg_email_backup_warn(vm, hours)
+                    dispatch_notifications(notify, msg_backup_warn(vm, hours), sub_em, html_em)
                     sent += 1
             else:
                 for atype in (AlertType.BACKUP_WARN, AlertType.BACKUP_CRIT):
                     existing = db.get_active_notification(vm_id, atype)
                     if existing and db.resolve_notification(vm_id, atype, now_iso):
-                        if notify:
-                            send_telegram(msg_resolved(vm_name, tenant, atype, existing['first_sent']))
+                        sub_em, html_em = msg_email_resolved(vm_name, tenant, atype, existing['first_sent'])
+                        dispatch_notifications(notify, msg_resolved(vm_name, tenant, atype, existing['first_sent']), sub_em, html_em)
                         sent += 1
 
         # ── 3. CyberFit bajo ───────────────────────────────────────────────
@@ -353,14 +586,14 @@ def check_own_rules(machines: list, now_iso: str) -> int:
                 db.upsert_notification(vm_id, vm_name, tenant,
                                        AlertType.CYBERFIT_LOW, 'warning', now_iso,
                                        extra_data={'score': score})
-                if notify:
-                    send_telegram(msg_cyberfit(vm))
+                sub_em, html_em = msg_email_cyberfit(vm)
+                dispatch_notifications(notify, msg_cyberfit(vm), sub_em, html_em)
                 sent += 1
         elif score >= CYBERFIT_THR:
             existing = db.get_active_notification(vm_id, AlertType.CYBERFIT_LOW)
             if existing and db.resolve_notification(vm_id, AlertType.CYBERFIT_LOW, now_iso):
-                if notify:
-                    send_telegram(msg_resolved(vm_name, tenant, AlertType.CYBERFIT_LOW, existing['first_sent']))
+                sub_em, html_em = msg_email_resolved(vm_name, tenant, AlertType.CYBERFIT_LOW, existing['first_sent'])
+                dispatch_notifications(notify, msg_resolved(vm_name, tenant, AlertType.CYBERFIT_LOW, existing['first_sent']), sub_em, html_em)
                 sent += 1
 
         # ── 4. Estado crítico / warning ────────────────────────────────────
@@ -373,14 +606,14 @@ def check_own_rules(machines: list, now_iso: str) -> int:
                 snd, esc = should_send(vm_id, at, sev, now_iso)
                 if snd:
                     db.upsert_notification(vm_id, vm_name, tenant, at, sev, now_iso)
-                    if notify:
-                        send_telegram(msg_status(vm))
+                    sub_em, html_em = msg_email_status(vm)
+                    dispatch_notifications(notify, msg_status(vm), sub_em, html_em)
                     sent += 1
             else:
                 existing = db.get_active_notification(vm_id, at)
                 if existing and db.resolve_notification(vm_id, at, now_iso):
-                    if notify:
-                        send_telegram(msg_resolved(vm_name, tenant, at, existing['first_sent']))
+                    sub_em, html_em = msg_email_resolved(vm_name, tenant, at, existing['first_sent'])
+                    dispatch_notifications(notify, msg_resolved(vm_name, tenant, at, existing['first_sent']), sub_em, html_em)
                     sent += 1
 
     return sent
@@ -464,7 +697,7 @@ NATIVE_ALERT_TYPES = {
 
 def check_acronis_alerts(now_iso: str) -> int:
     """
-    Consulta las alertas nativas de Acronis y notifica por Telegram.
+    Consulta las alertas nativas de Acronis y notifica por Telegram y Email.
     Solo procesa tipos relevantes y aplica anti-spam.
     """
     if not CLIENT_ID or not CLIENT_SECRET:
@@ -480,12 +713,10 @@ def check_acronis_alerts(now_iso: str) -> int:
             if atype not in NATIVE_ALERT_TYPES:
                 continue
 
-            # Usar el ID de alerta de Acronis como vm_id para el tracking
             alert_id  = alert.get('id', atype)
             sev_raw   = (alert.get('severity') or 'warning').lower()
             sev       = 'critical' if sev_raw in ('critical','high') else 'warning'
 
-            # Construir clave única: tipo + recurso
             resource_id = (alert.get('details', {}).get('resource_id')
                            or alert.get('details', {}).get('context_id')
                            or alert_id)
@@ -493,7 +724,12 @@ def check_acronis_alerts(now_iso: str) -> int:
 
             snd, _ = should_send(resource_id, notif_key, sev, now_iso)
             if snd:
-                if send_telegram(msg_acronis_alert(alert)):
+                msg_tg = msg_acronis_alert(alert)
+                sub_em, html_em = msg_email_acronis_alert(alert)
+                tg_ok = send_telegram(msg_tg)
+                em_ok = send_email(sub_em, html_em)
+
+                if tg_ok or em_ok:
                     db.upsert_notification(
                         resource_id,
                         alert.get('details', {}).get('resource_name', 'N/A'),
@@ -514,13 +750,17 @@ def check_acronis_alerts(now_iso: str) -> int:
 def run():
     db.init_db()
 
+    email_cfg = db.get_channel_config('email')
+    email_active = bool(email_cfg.get('enabled') or (SMTP_HOST and TO_EMAILS))
+
     print(f"\n{'='*60}")
     print(f"  Acronis Notification Engine")
     print(f"  Intervalo      : {NOTIFY_INTERVAL}s")
     print(f"  Re-notificación: cada {REMIND_INTERVAL_H}h")
     print(f"  Backup warning : >{BACKUP_WARN_H}h  |  critical: >{BACKUP_CRIT_H}h")
     print(f"  CyberFit mín   : {CYBERFIT_THR}")
-    print(f"  Telegram       : {'✅ configurado' if TELEGRAM_BOT_TOKEN else '❌ NO configurado'}")
+    print(f"  Telegram       : {'✅ configurado' if (TELEGRAM_BOT_TOKEN or db.get_channel_config('telegram').get('enabled')) else '❌ NO configurado'}")
+    print(f"  Email SMTP     : {'✅ configurado' if email_active else '❌ NO configurado'}")
     print(f"  Alertas Acronis: {'✅' if ACRONIS_ALERTS_ON else '❌'}")
     print(f"  DRY RUN        : {'✅ activo (no envía)' if DRY_RUN else '❌'}")
     print(f"{'='*60}\n")
@@ -560,6 +800,6 @@ def run():
 
 
 if __name__ == '__main__':
-    if not TELEGRAM_BOT_TOKEN and not DRY_RUN:
-        print("⚠️  TELEGRAM_BOT_TOKEN no configurado. Usa DRY_RUN=true para probar.")
+    if not TELEGRAM_BOT_TOKEN and not DRY_RUN and not (SMTP_HOST and TO_EMAILS):
+        print("⚠️  Ni TELEGRAM_BOT_TOKEN ni SMTP están configurados. Usa DRY_RUN=true para probar.")
     run()
