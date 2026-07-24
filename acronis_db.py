@@ -125,6 +125,11 @@ def init_db():
             conn.execute("ALTER TABLE machines ADD COLUMN tags TEXT DEFAULT '[]'")
         except sqlite3.OperationalError:
             pass
+
+        try:
+            conn.execute("ALTER TABLE machines ADD COLUMN last_backup_success_notified TEXT")
+        except sqlite3.OperationalError:
+            pass
     print(f"[DB] Base de datos inicializada en: {DB_PATH}")
 
 # ─────────────────────────── Máquinas ──────────────────────────────────────
@@ -293,6 +298,15 @@ def set_machine_visibility(vm_id: str, visible: bool, pinned: bool = None, notif
                 "UPDATE machines SET muted_until=? WHERE vm_id=?",
                 (muted_until, vm_id)
             )
+
+
+def set_backup_success_notified(vm_id: str, timestamp_iso: str):
+    """Guarda el timestamp del último respaldo exitoso notificado para evitar notificaciones duplicadas."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE machines SET last_backup_success_notified=? WHERE vm_id=?",
+            (timestamp_iso, vm_id)
+        )
 
 
 def set_bulk_notifications(notify: bool, tenant_id: str = None):

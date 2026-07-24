@@ -18,6 +18,7 @@ Este proyecto permite visualizar en tiempo real el estado de **todos** los recur
 
 ### 🔔 Motor de Notificaciones (Multicanal: Telegram + Email SMTP)
 *   **Alertas Personalizadas**: 
+    *   **Respaldos Exitosos**: Notificación de confirmación cada vez que un equipo o recurso cloud completa un respaldo de forma exitosa en Acronis.
     *   Backup atrasado (>25h advertencia, >48h crítico).
     *   Equipos sin registro histórico de backups.
     *   Cambios de estado (Critical/Warning/OK) en la protección de Acronis.

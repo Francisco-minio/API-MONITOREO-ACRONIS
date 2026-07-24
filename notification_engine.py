@@ -70,6 +70,7 @@ BACKUP_WARN_H         = int(os.getenv('NOTIFY_BACKUP_HOURS', 25))
 BACKUP_CRIT_H         = int(os.getenv('NOTIFY_BACKUP_CRIT_HOURS', 48))
 CYBERFIT_THR          = int(os.getenv('CYBERFIT_THRESHOLD', 500))
 ACRONIS_ALERTS_ON     = os.getenv('ACRONIS_ALERTS_ENABLED', 'true').lower() == 'true'
+NOTIFY_BACKUP_SUCCESS = os.getenv('NOTIFY_BACKUP_SUCCESS', 'true').lower() == 'true'
 DRY_RUN               = os.getenv('DRY_RUN', 'false').lower() == 'true'
 
 # ─────────────────────────── Tipos de alerta ───────────────────────────────
@@ -78,6 +79,7 @@ class AlertType:
     BACKUP_NO_RECORD   = 'BACKUP_NO_RECORD'    # nunca hizo backup
     BACKUP_WARN        = 'BACKUP_OVERDUE_25H'  # >25h sin backup
     BACKUP_CRIT        = 'BACKUP_OVERDUE_48H'  # >48h sin backup
+    BACKUP_SUCCESS     = 'BACKUP_SUCCESS'      # backup exitoso registrado
     CYBERFIT_LOW       = 'CYBERFIT_LOW'
     STATUS_CRITICAL    = 'STATUS_CRITICAL'
     STATUS_WARNING     = 'STATUS_WARNING'
@@ -235,6 +237,23 @@ def msg_backup_warn(vm: dict, hours: float, escalated: bool = False) -> str:
         f"📅 Último backup: {fmt_ts(vm.get('last_backup_success'))}\n"
         f"📋 Plan: {vm.get('protection_plan','N/A')}\n"
         f"🔒 Estado: {vm.get('protection_status','unknown').upper()}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🕐 {now_chile().strftime('%d/%m/%Y %H:%M')}"
+    )
+
+
+def msg_backup_success(vm: dict) -> str:
+    size_gb  = vm.get('backup_size_gb', 0)
+    size_str = f" ({size_gb:.1f} GB)" if size_gb else ""
+    return (
+        f"✅ <b>RESPALDO EXITOSO</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🖥️  <b>{vm['name']}</b>\n"
+        f"🏢 {vm.get('tenant_name','')}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📅 Fecha de respaldo: <b>{fmt_ts(vm.get('last_backup_success'))}</b>\n"
+        f"📋 Plan: {vm.get('protection_plan','N/A')}\n"
+        f"💾 Tamaño: {size_str or 'N/A'}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🕐 {now_chile().strftime('%d/%m/%Y %H:%M')}"
     )
@@ -407,6 +426,20 @@ def msg_email_backup_warn(vm: dict, hours: float, escalated: bool = False) -> Tu
         _email_row("Estado Protección", (vm.get('protection_status') or 'unknown').upper())
     )
     return subj, render_email_html(title, badge_text, badge_color, rows)
+
+
+def msg_email_backup_success(vm: dict) -> Tuple[str, str]:
+    subj = f"✅ [EXITOSO] Respaldo completado – {vm['name']}"
+    size_gb  = vm.get('backup_size_gb', 0)
+    size_str = f"{size_gb:.1f} GB" if size_gb else "N/A"
+    rows = (
+        _email_row("Equipo / VM", vm['name'], True) +
+        _email_row("Cliente / Tenant", vm.get('tenant_name', 'N/A')) +
+        _email_row("Fecha de Respaldo", fmt_ts(vm.get('last_backup_success'))) +
+        _email_row("Plan de Protección", vm.get('protection_plan', 'N/A')) +
+        _email_row("Tamaño de Backup", size_str)
+    )
+    return subj, render_email_html("Respaldo Completado Exitosamente", "EXITOSO", "#10b981", rows)
 
 
 def msg_email_backup_no_record(vm: dict) -> Tuple[str, str]:
@@ -616,6 +649,17 @@ def check_own_rules(machines: list, now_iso: str) -> int:
                     dispatch_notifications(notify, msg_resolved(vm_name, tenant, at, existing['first_sent']), sub_em, html_em)
                     sent += 1
 
+        # ── 5. Respaldo exitoso ──────────────────────────────────────────────
+        if NOTIFY_BACKUP_SUCCESS and has_backup:
+            last_success  = vm.get('last_backup_success')
+            last_notified = vm.get('last_backup_success_notified')
+
+            if last_success and last_success != last_notified:
+                sub_em, html_em = msg_email_backup_success(vm)
+                if dispatch_notifications(notify, msg_backup_success(vm), sub_em, html_em):
+                    db.set_backup_success_notified(vm_id, last_success)
+                    sent += 1
+
     return sent
 
 # ─────────────────────── Alertas nativas Acronis ───────────────────────────
@@ -761,6 +805,7 @@ def run():
     print(f"  CyberFit mín   : {CYBERFIT_THR}")
     print(f"  Telegram       : {'✅ configurado' if (TELEGRAM_BOT_TOKEN or db.get_channel_config('telegram').get('enabled')) else '❌ NO configurado'}")
     print(f"  Email SMTP     : {'✅ configurado' if email_active else '❌ NO configurado'}")
+    print(f"  Backup Exitoso : {'✅ activo' if NOTIFY_BACKUP_SUCCESS else '❌ desactivado'}")
     print(f"  Alertas Acronis: {'✅' if ACRONIS_ALERTS_ON else '❌'}")
     print(f"  DRY RUN        : {'✅ activo (no envía)' if DRY_RUN else '❌'}")
     print(f"{'='*60}\n")
