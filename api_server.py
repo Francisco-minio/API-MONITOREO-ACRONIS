@@ -20,7 +20,7 @@ import os
 import sys
 import json
 from datetime import datetime, timezone
-from flask import Flask, jsonify, request, send_from_directory, abort
+from flask import Flask, jsonify, request, send_from_directory, abort, make_response
 from flask_cors import CORS
 
 # Asegurar que podemos importar acronis_db desde el mismo directorio
@@ -38,7 +38,7 @@ CORSapp = CORS(app)
 # ────────────────────────── Helpers ────────────────────────────────────────
 
 def success(data, **kwargs):
-    return jsonify({'ok': True, 'data': data, **kwargs})
+    return jsonify({'ok': True, 'status': 'ok', 'data': data, **kwargs})
 
 def error(msg, code=400):
     return jsonify({'ok': False, 'error': msg}), code
@@ -48,6 +48,10 @@ def error(msg, code=400):
 @app.route('/')
 def index():
     return send_from_directory(APP_DIR, 'index.html')
+
+@app.route('/backupcode_logo.png')
+def backupcode_logo():
+    return send_from_directory(APP_DIR, 'backupcode_logo.png')
 
 @app.route('/monitor_status.json')
 def monitor_status_json():
@@ -347,6 +351,147 @@ def _test_email(cfg: dict):
         return success({'sent_to': to_addrs})
     except Exception as e:
         return error(f'Error SMTP: {str(e)}')
+
+
+# ────────────────────────── API: Reportes Ejecutivos ───────────────────────
+
+@app.route('/api/reports/config', methods=['GET'])
+def api_reports_config_get():
+    """Retorna la configuración de programación automática del reporte semanal."""
+    return success(db.get_report_config())
+
+
+@app.route('/api/reports/config', methods=['POST'])
+def api_reports_config_set():
+    """Actualiza la configuración del reporte semanal."""
+    body = request.get_json(silent=True) or {}
+    if isinstance(body.get('emails'), str):
+        body['emails'] = [x.strip() for x in body['emails'].split(',') if x.strip()]
+    cfg = db.set_report_config(body)
+    return success(cfg)
+
+
+@app.route('/api/reports/storage', methods=['GET'])
+def api_reports_storage():
+    """Retorna las métricas más recientes de almacenamiento local y cloud."""
+    return success(db.get_latest_storage_metrics())
+
+
+@app.route('/api/reports/generate', methods=['POST'])
+def api_reports_generate():
+    """Genera datos de reporte y HTML renderizado bajo demanda para previsualización."""
+    import notification_engine as notif
+    body = request.get_json(silent=True) or {}
+    start_date = body.get('start_date')
+    end_date = body.get('end_date')
+    tenant_id = body.get('tenant_id')
+    vm_ids = body.get('vm_ids')
+
+    try:
+        data = notif.generate_weekly_report_data(start_date, end_date, tenant_id, vm_ids=vm_ids)
+        html = notif.render_report_html(data)
+        return success({'report_data': data, 'html': html})
+    except Exception as e:
+        return error(f"Error generando reporte: {str(e)}", 500)
+
+
+@app.route('/api/reports/send', methods=['POST'])
+def api_reports_send():
+    """Genera y despacha el reporte por correo inmediatamente."""
+    import notification_engine as notif
+    body = request.get_json(silent=True) or {}
+    emails = body.get('emails')
+    if isinstance(emails, str):
+        emails = [x.strip() for x in emails.split(',') if x.strip()]
+
+    start_date = body.get('start_date')
+    end_date = body.get('end_date')
+    tenant_id = body.get('tenant_id')
+    vm_ids = body.get('vm_ids')
+
+    try:
+        result = notif.send_weekly_report(
+            recipients=emails,
+            start_iso=start_date,
+            end_iso=end_date,
+            tenant_id=tenant_id,
+            vm_ids=vm_ids
+        )
+        if not result.get('ok'):
+            return error(result.get('error') or "Error enviando correo de reporte", 500)
+        return success(result)
+    except Exception as e:
+        return error(f"Error despachando reporte: {str(e)}", 500)
+
+
+@app.route('/api/reports/export-pdf', methods=['GET', 'POST'])
+def api_reports_export_pdf():
+    """Genera y descarga el reporte ejecutivo de respaldos en formato PDF profesional."""
+    import notification_engine as notif
+    if request.method == 'POST':
+        body = request.get_json(silent=True) or {}
+    else:
+        body = request.args.to_dict()
+
+    start_date = body.get('start_date')
+    end_date = body.get('end_date')
+    tenant_id = body.get('tenant_id')
+    vm_ids = body.get('vm_ids')
+    if isinstance(vm_ids, str):
+        vm_ids = [x.strip() for x in vm_ids.split(',') if x.strip()]
+
+    try:
+        data = notif.generate_weekly_report_data(start_date, end_date, tenant_id, vm_ids=vm_ids)
+        pdf_bytes = notif.generate_report_pdf(data)
+
+        date_str = datetime.now().strftime('%Y-%m-%d')
+        filename = f"Reporte_Respaldos_Backupcode_{date_str}.pdf"
+
+        response = make_response(pdf_bytes)
+        response.headers['Content-Type'] = 'application/pdf'
+        response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+    except Exception as e:
+        return error(f"Error exportando reporte a PDF: {str(e)}", 500)
+
+
+# ────────────────────── Almacenamiento por Tenants ─────────────────────────
+
+@app.route('/api/tenants/storage', methods=['GET'])
+def get_tenants_storage():
+    """Retorna listado de almacenamiento y cuotas por tenant junto con resumen global."""
+    try:
+        tenants = db.get_all_tenant_storages()
+        summary = db.get_global_storage_summary()
+        return success({
+            'summary': summary,
+            'tenants': tenants
+        })
+    except Exception as e:
+        return error(f"Error obteniendo almacenamiento de tenants: {str(e)}", 500)
+
+
+@app.route('/api/tenants/storage/sync', methods=['POST'])
+def sync_tenants_storage():
+    """Sincroniza bajo demanda el almacenamiento y cuotas desde Acronis."""
+    try:
+        import acronis_monitor
+        poller = acronis_monitor.AcronisMonitor(
+            acronis_monitor.CLIENT_ID,
+            acronis_monitor.CLIENT_SECRET,
+            acronis_monitor.DC_URL
+        )
+        updated = poller.fetch_tenant_storages_and_quotas()
+        tenants = db.get_all_tenant_storages()
+        summary = db.get_global_storage_summary()
+        return success({
+            'updated_count': updated,
+            'summary': summary,
+            'tenants': tenants
+        }, message=f"Sincronizados {updated} clientes con éxito")
+    except Exception as e:
+        return error(f"Error sincronizando almacenamiento de clientes: {str(e)}", 500)
+
 
 # ────────────────────────────── Main ──────────────────────────────────────
 

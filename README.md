@@ -16,6 +16,17 @@ Este proyecto permite visualizar en tiempo real el estado de **todos** los recur
 *   **Etiquetas y Clasificación**: Soporte para etiquetas personalizadas para organizar recursos por criticidad o función.
 *   **Historial de Cambios**: Registro detallado de cada modificación detectada en el inventario.
 
+### 📊 Reportes Ejecutivos e Históricos de Respaldo
+*   **Generación Bajo Demanda**: Selector de rango de fechas (*Últimos 7 días*, *14 días*, *Último mes* o fechas personalizadas) con previsualización HTML en tiempo real dentro del Dashboard.
+*   **Envío Automático Programable**: Configuración del día de la semana (Lunes por defecto) y hora exacta (Zona Horaria Chile UTC-4) para el envío automático a Francisco, Pablo y otros destinatarios por correo electrónico.
+*   **Contenido Completo del Informe**:
+    *   **KPIs Ejecutivos**: Total de equipos protegidos, tasa de éxito %, respaldos exitosos, advertencias y fallidos.
+    *   **Distribución por Plan**: Conteo de equipos agrupados por cada Plan de Protección aplicado.
+    *   **Diagnóstico de Incidencias**: Lista detallada de equipos con fallos o advertencias, incluyendo la causa raíz exacta devuelta por la API de Acronis.
+    *   **Detalle de Servidores / BBDD**: Fecha/hora del último punto de recuperación y cálculo de antigüedad (alertando visualmente si supera 24h o 48h).
+    *   **Capacidad de Almacenamiento Local (NTFS) & Cloud**: Medidores de capacidad total, usada, disponible y % de uso, con **alerta destacada en rojo ante riesgo de agotamiento** (>85% o umbral configurable).
+*   **Persistencia Histórica**: Base de datos SQLite local (`backup_executions` y `storage_history`) para conservar el historial sin restricciones de retención de Acronis.
+
 ### 🔔 Motor de Notificaciones (Multicanal: Telegram + Email SMTP)
 *   **Alertas Personalizadas**: 
     *   **Respaldos Exitosos**: Notificación de confirmación cada vez que un equipo o recurso cloud completa un respaldo de forma exitosa en Acronis.
@@ -32,10 +43,10 @@ Este proyecto permite visualizar en tiempo real el estado de **todos** los recur
 
 ### 🏗️ Arquitectura del Sistema
 El sistema se divide en 4 componentes principales:
-1.  **`acronis_monitor.py` (Poller)**: Consulta la API de Acronis, normaliza datos de múltiples tipos de recursos y detecta cambios.
-2.  **`acronis_db.py` (Capa de Datos)**: Gestiona una base de datos SQLite con migraciones automáticas y soporte para metadatos avanzados.
-3.  **`notification_engine.py` (Worker)**: Evalúa las reglas de negocio, procesa alertas nativas y gestiona el envío multicanal por Telegram y Email SMTP.
-4.  **`api_server.py` (REST API)**: Sirve los datos al frontend y gestiona las preferencias de configuración y visibilidad.
+1.  **`acronis_monitor.py` (Poller)**: Consulta la API de Acronis, normaliza recursos, colecta actividades de backup (Task Manager API) y monitorea el almacenamiento local/cloud.
+2.  **`acronis_db.py` (Capa de Datos)**: SQLite WAL con tablas de máquinas, historial, notificaciones, ejecuciones de backup (`backup_executions`) y muestreo de almacenamiento (`storage_history`).
+3.  **`notification_engine.py` (Worker & Scheduler)**: Evalúa reglas, despacha alertas multicanal y programa el envío automático semanal del Reporte Ejecutivo.
+4.  **`api_server.py` (REST API & Dashboard)**: Sirve el frontend, endpoints de inventario, configuración de canales y generación/envío de reportes bajo demanda.
 
 ---
 

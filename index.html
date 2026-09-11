@@ -698,9 +698,12 @@
 
 <!-- ═══════════════════ SIDEBAR ═══════════════════ -->
 <aside id="sidebar">
-    <div class="sidebar-logo">
-        <h2><i class="fas fa-shield-halved" style="margin-right:8px"></i>Acronis Monitor</h2>
-        <p>Panel de Control v2</p>
+    <div class="sidebar-logo" style="display:flex;align-items:center;gap:12px;padding:16px 14px;">
+        <img src="/backupcode_logo.png" alt="Backupcode" style="height:38px;width:auto;object-fit:contain;" />
+        <div>
+            <h2 style="font-size:15px;font-weight:800;letter-spacing:0.5px;color:#ffffff;margin:0;">BACKUPCODE</h2>
+            <p style="font-size:10px;color:var(--accent);font-weight:600;letter-spacing:1px;margin:2px 0 0 0;">MONITOR ACRONIS</p>
+        </div>
     </div>
 
     <div class="sidebar-section">
@@ -708,12 +711,18 @@
         <div class="nav-item active" id="nav-dashboard" onclick="setView('dashboard')">
             <i class="fas fa-th-large"></i> Dashboard
         </div>
+        <div class="nav-item" id="nav-storage" onclick="setView('storage')">
+            <i class="fas fa-database"></i> Almacenamiento & Cuotas
+        </div>
         <div class="nav-item" id="nav-history" onclick="setView('history')">
             <i class="fas fa-clock-rotate-left"></i> Historial de Cambios
         </div>
         <div class="nav-item" id="nav-notifications" onclick="setView('notifications')">
             <i class="fas fa-bell"></i> Notificaciones
             <span id="notif-badge" style="margin-left:auto;background:var(--crit);color:#fff;border-radius:999px;font-size:9px;font-weight:700;padding:1px 6px;display:none;">0</span>
+        </div>
+        <div class="nav-item" id="nav-reports" onclick="setView('reports')">
+            <i class="fas fa-chart-line"></i> Reportes
         </div>
         <div class="nav-item" id="nav-config" onclick="setView('config')">
             <i class="fas fa-sliders"></i> Configuración
@@ -991,6 +1000,267 @@
                             <i class="fas fa-spinner fa-spin"></i> Cargando...
                         </p>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ══════════════════════════════════════════════════════════════
+             VISTA: ALMACENAMIENTO & CUOTAS POR CLIENTE
+        ══════════════════════════════════════════════════════════════ -->
+        <div id="view-storage" style="display:none;">
+            <!-- Header con botones de acción -->
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
+                <div>
+                    <h2 style="font-size:18px;font-weight:700;"><i class="fas fa-database" style="color:var(--primary);margin-right:8px;"></i>Almacenamiento & Cuotas por Cliente</h2>
+                    <p style="font-size:12px;color:var(--muted);margin-top:2px;">
+                        Monitoreo en tiempo real de espacio utilizado, almacenamiento local NTFS, nube Acronis y estado de cuotas de cada cliente.
+                    </p>
+                </div>
+                <div style="display:flex;gap:10px;align-items:center;">
+                    <span id="storage-last-sync" style="font-size:11px;color:var(--muted);background:rgba(255,255,255,0.05);padding:6px 10px;border-radius:6px;border:1px solid var(--border);">
+                        <i class="fas fa-clock" style="margin-right:4px;"></i> Sin sincronizar
+                    </span>
+                    <button class="btn btn-primary" id="btn-sync-storage" onclick="syncStorageData()">
+                        <i class="fas fa-rotate"></i> Sincronizar Acronis
+                    </button>
+                </div>
+            </div>
+
+            <!-- KPIs Superiores de Almacenamiento Global -->
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:14px;margin-bottom:24px;">
+                <div class="stat-card" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;">
+                    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:700;letter-spacing:.5px;">Total Almacenado Global</div>
+                    <div id="kpi-total-storage" style="font-size:24px;font-weight:800;color:var(--text);margin-top:6px;">0 GB</div>
+                    <div id="kpi-total-tenants" style="font-size:11px;color:var(--muted);margin-top:4px;">0 clientes evaluados</div>
+                </div>
+                <div class="stat-card" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;">
+                    <div style="font-size:11px;color:#38bdf8;text-transform:uppercase;font-weight:700;letter-spacing:.5px;"><i class="fas fa-hard-drive"></i> Local NTFS</div>
+                    <div id="kpi-local-storage" style="font-size:24px;font-weight:800;color:#38bdf8;margin-top:6px;">0 GB</div>
+                    <div style="font-size:11px;color:var(--muted);margin-top:4px;">Repositorios locales / red</div>
+                </div>
+                <div class="stat-card" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;">
+                    <div style="font-size:11px;color:#a78bfa;text-transform:uppercase;font-weight:700;letter-spacing:.5px;"><i class="fas fa-cloud"></i> Cloud Acronis</div>
+                    <div id="kpi-cloud-storage" style="font-size:24px;font-weight:800;color:#a78bfa;margin-top:6px;">0 GB</div>
+                    <div style="font-size:11px;color:var(--muted);margin-top:4px;">Centros de datos Acronis</div>
+                </div>
+                <div class="stat-card" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;">
+                    <div style="font-size:11px;color:#10b981;text-transform:uppercase;font-weight:700;letter-spacing:.5px;"><i class="fab fa-microsoft"></i> Microsoft 365 Cloud</div>
+                    <div id="kpi-m365-storage" style="font-size:24px;font-weight:800;color:#10b981;margin-top:6px;">0 GB</div>
+                    <div style="font-size:11px;color:var(--muted);margin-top:4px;">OneDrive, Teams y buzones</div>
+                </div>
+            </div>
+
+            <!-- Barra de Filtro y Búsqueda -->
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:12px;background:var(--card);padding:12px 16px;border-radius:10px;border:1px solid var(--border);">
+                <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:240px;">
+                    <i class="fas fa-search" style="color:var(--muted);"></i>
+                    <input type="text" id="storage-search-input" placeholder="Buscar cliente por nombre..." class="filter-input" style="flex:1;background:transparent;border:none;color:var(--text);font-size:13px;" oninput="applyStorageFilters()">
+                </div>
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <label style="font-size:12px;color:var(--muted);">Filtro de Cuota:</label>
+                    <select id="storage-quota-filter" class="filter-select" onchange="applyStorageFilters()">
+                        <option value="all">Todos los clientes</option>
+                        <option value="with_quota">Con cuota límite fijada</option>
+                        <option value="flexible">Consumo Flexible (Pay-as-you-go)</option>
+                        <option value="warning">En Riesgo / Alto consumo (>80%)</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Tabla de Clientes y Cuotas -->
+            <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:30px;">
+                <div style="overflow-x:auto;">
+                    <table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;font-size:13px;min-width:850px;">
+                        <thead>
+                            <tr style="background:#1e293b;color:var(--muted);text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">
+                                <th style="padding:12px 16px;">Cliente / Tenant</th>
+                                <th style="padding:12px 16px;">Total Almacenado</th>
+                                <th style="padding:12px 16px;">Local (NTFS)</th>
+                                <th style="padding:12px 16px;">Cloud Acronis</th>
+                                <th style="padding:12px 16px;">Desglose de Cargas</th>
+                                <th style="padding:12px 16px;min-width:180px;">Cuota / Límite</th>
+                                <th style="padding:12px 16px;text-align:center;">Estado</th>
+                            </tr>
+                        </thead>
+                        <tbody id="storage-table-body">
+                            <tr>
+                                <td colspan="7" style="padding:30px;text-align:center;color:var(--muted);">
+                                    <i class="fas fa-spinner fa-spin"></i> Cargando datos de almacenamiento...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ══════════════════════════════════════════════════════════════
+             VISTA: REPORTES EJECUTIVOS
+        ══════════════════════════════════════════════════════════════ -->
+        <div id="view-reports" style="display:none;">
+            <!-- Header con botones de acción -->
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
+                <div>
+                    <h2 style="font-size:18px;font-weight:700;">Reportes Ejecutivos de Respaldo</h2>
+                    <p style="font-size:12px;color:var(--muted);margin-top:2px;">
+                        Genera informes bajo demanda por rango de fechas o gestiona el envío programado automático (Lunes).
+                    </p>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                    <button class="btn btn-ghost" onclick="toggleReportConfig()" id="btn-toggle-rep-cfg">
+                        <i class="fas fa-calendar-gear"></i> Programación Automática
+                    </button>
+                    <button class="btn btn-primary" onclick="generateReportManual()">
+                        <i class="fas fa-arrows-rotate"></i> Actualizar Vista
+                    </button>
+                    <button class="btn btn-primary" onclick="downloadReportPDF()" id="btn-download-pdf" style="background:#dc2626;border-color:#ef4444;color:#fff;">
+                        <i class="fas fa-file-pdf"></i> Descargar PDF
+                    </button>
+                    <button class="btn btn-success" onclick="sendReportEmailManual()" id="btn-send-report-now">
+                        <i class="fas fa-paper-plane"></i> Enviar por Correo
+                    </button>
+                </div>
+            </div>
+
+            <!-- Panel Plegable de Configuración de Programación Automática -->
+            <div id="report-config-panel" class="channel-card" style="display:none;margin-bottom:24px;border-color:rgba(59,130,246,0.3);">
+                <div class="channel-header" style="margin-bottom:16px;">
+                    <div class="channel-title-wrap">
+                        <div class="channel-icon" style="background:rgba(59,130,246,0.15);color:var(--accent);">
+                            <i class="fas fa-clock"></i>
+                        </div>
+                        <div>
+                            <div style="font-size:15px;font-weight:700;">Envío Programado Automático</div>
+                            <div style="font-size:11px;color:var(--muted);">Despacho periódico del informe semanal</div>
+                        </div>
+                    </div>
+                    <div class="channel-status">
+                        <span id="rep-status-pill" class="status-pill sp-on">Activo</span>
+                        <label class="toggle-sw" style="width:40px;height:22px;">
+                            <input type="checkbox" id="rep-enabled" onchange="onRepToggle()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Día de Envío</label>
+                        <select id="rep-day" class="form-input">
+                            <option value="mon" selected>Lunes</option>
+                            <option value="tue">Martes</option>
+                            <option value="wed">Miércoles</option>
+                            <option value="thu">Jueves</option>
+                            <option value="fri">Viernes</option>
+                            <option value="sat">Sábado</option>
+                            <option value="sun">Domingo</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Hora de Envío (Zona Horaria Chile UTC-4)</label>
+                        <input id="rep-time" type="time" class="form-input" value="08:00">
+                    </div>
+                </div>
+
+                <div class="form-row full">
+                    <div class="form-group">
+                        <label class="form-label">Destinatarios Principales</label>
+                        <input id="rep-emails" type="text" class="form-input" placeholder="francisco@minio.cl, pablo@minio.cl">
+                        <span class="form-hint">Correos separados por coma (ej: francisco@minio.cl, pablo@minio.cl).</span>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Alerta Agotamiento Local NTFS (%)</label>
+                        <input id="rep-local-warn" type="number" class="form-input" min="50" max="99" value="85">
+                        <span class="form-hint">Destacar si el almacenamiento local supera este porcentaje.</span>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Alerta Agotamiento Cloud Acronis (%)</label>
+                        <input id="rep-cloud-warn" type="number" class="form-input" min="50" max="99" value="90">
+                        <span class="form-hint">Destacar si el consumo cloud supera este porcentaje.</span>
+                    </div>
+                </div>
+
+                <div class="form-row full" style="margin-top:6px;padding:10px 14px;background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.2);border-radius:8px;">
+                    <label style="display:flex;align-items:center;gap:10px;font-size:12px;cursor:pointer;user-select:none;color:#f8fafc;">
+                        <input type="checkbox" id="rep-save-selected-vms" style="accent-color:var(--accent);width:16px;height:16px;">
+                        <span><strong>Fijar selección de máquinas:</strong> El reporte semanal de los lunes se generará exclusivamente con las máquinas seleccionadas en el panel inferior.</span>
+                    </label>
+                </div>
+
+                <div class="channel-actions">
+                    <button class="btn btn-primary" onclick="saveReportConfig()">
+                        <i class="fas fa-save"></i> Guardar Programación
+                    </button>
+                    <span id="rep-cfg-msg" style="font-size:12px;color:var(--ok);margin-left:12px;display:none;"></span>
+                </div>
+            </div>
+
+            <!-- Barra de Filtros Manuales por Fecha y Preset -->
+            <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin-bottom:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                <span style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;">Rango de Fecha:</span>
+                <div style="display:flex;gap:6px;">
+                    <button class="btn btn-ghost active" id="btn-preset-7d" onclick="setReportPreset(7)" style="font-size:11px;padding:5px 10px;">Últimos 7 días</button>
+                    <button class="btn btn-ghost" id="btn-preset-14d" onclick="setReportPreset(14)" style="font-size:11px;padding:5px 10px;">14 días</button>
+                    <button class="btn btn-ghost" id="btn-preset-30d" onclick="setReportPreset(30)" style="font-size:11px;padding:5px 10px;">Último Mes</button>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap;">
+                    <label style="font-size:12px;color:var(--muted);">Desde:</label>
+                    <input type="date" id="rep-start-date" class="form-input" style="padding:4px 8px;font-size:12px;width:auto;">
+                    <label style="font-size:12px;color:var(--muted);">Hasta:</label>
+                    <input type="date" id="rep-end-date" class="form-input" style="padding:4px 8px;font-size:12px;width:auto;">
+                    <button class="btn btn-primary" onclick="generateReportManual()" style="padding:6px 12px;font-size:12px;">
+                        <i class="fas fa-arrows-rotate"></i> Actualizar
+                    </button>
+                </div>
+            </div>
+
+            <!-- Selector de Alcance de Máquinas a Incluir -->
+            <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin-bottom:20px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+                    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+                        <span style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;">
+                            <i class="fas fa-server"></i> Alcance de Máquinas:
+                        </span>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;color:#f8fafc;">
+                            <input type="radio" name="rep-scope" id="rep-scope-visible" value="visible" checked onchange="onReportScopeChange()">
+                            <span>Equipos Visibles del Dashboard (<strong id="rep-visible-count">0</strong>)</span>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;color:#f8fafc;">
+                            <input type="radio" name="rep-scope" id="rep-scope-custom" value="custom" onchange="onReportScopeChange()">
+                            <span>Selección Personalizada (<strong id="rep-selected-count" style="color:#60a5fa;">0</strong>)</span>
+                        </label>
+                    </div>
+                    <button class="btn btn-ghost" id="btn-toggle-vm-selector" onclick="toggleReportVmSelector()" style="font-size:11px;padding:5px 12px;display:none;">
+                        <i class="fas fa-list-check"></i> Elegir Máquinas
+                    </button>
+                </div>
+
+                <!-- Panel desplegable de selección de máquinas -->
+                <div id="rep-custom-vms-panel" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
+                    <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;flex-wrap:wrap;">
+                        <input type="text" id="rep-vm-search" class="form-input" placeholder="Buscar por equipo o cliente..." oninput="filterReportVmList()" style="font-size:12px;padding:6px 10px;max-width:280px;">
+                        <button class="btn btn-ghost" onclick="selectReportVmsAll(true)" style="font-size:11px;padding:4px 8px;">
+                            <i class="fas fa-check-double"></i> Seleccionar Todos
+                        </button>
+                        <button class="btn btn-ghost" onclick="selectReportVmsAll(false)" style="font-size:11px;padding:4px 8px;">
+                            <i class="fas fa-ban"></i> Deseleccionar
+                        </button>
+                        <span id="rep-selector-info" style="font-size:11px;color:var(--muted);margin-left:auto;"></span>
+                    </div>
+                    <div id="rep-vm-checkbox-list" style="max-height:220px;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));gap:6px;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--bg);">
+                        <!-- Items generados dinámicamente -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Contenedor del Reporte (Previsualización HTML Viva) -->
+            <div id="report-view-container" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;min-height:300px;">
+                <div style="text-align:center;padding:50px 20px;color:var(--muted);">
+                    <i class="fas fa-spinner fa-spin" style="font-size:24px;margin-bottom:12px;"></i>
+                    <p>Cargando reporte ejecutivo...</p>
                 </div>
             </div>
         </div>
@@ -1521,7 +1791,7 @@ async function saveConfig() {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function setView(view) {
     currentView = view;
-    ['dashboard','history','config','notifications'].forEach(v => {
+    ['dashboard','storage','history','config','notifications','reports'].forEach(v => {
         const el = document.getElementById(`view-${v}`);
         const nav = document.getElementById(`nav-${v}`);
         if (el)  el.style.display  = v === view ? '' : 'none';
@@ -1529,16 +1799,210 @@ function setView(view) {
     });
     const titles = {
         dashboard:     'VM Monitor',
+        storage:       'Almacenamiento & Cuotas',
         history:       'Historial',
         config:        'Configuración',
-        notifications: 'Notificaciones'
+        notifications: 'Notificaciones',
+        reports:       'Reportes Ejecutivos'
     };
     document.getElementById('view-title').innerHTML =
         `Acronis <span>${titles[view] || view}</span>`;
 
+    if (view === 'storage')       loadStorageView();
     if (view === 'history')       loadHistory();
     if (view === 'config')        loadConfig();
     if (view === 'notifications') loadNotifView();
+    if (view === 'reports')       initReportsView();
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Storage & Quotas View
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+let allTenantStorages = [];
+let storageSummary = {};
+
+async function loadStorageView() {
+    try {
+        const tbody = document.getElementById('storage-table-body');
+        if (!tbody) return;
+        
+        const res = await fetch('/api/tenants/storage');
+        const json = await res.json();
+        if (json.status === 'ok' && json.data) {
+            allTenantStorages = json.data.tenants || [];
+            storageSummary = json.data.summary || {};
+            renderStorageKPIs(storageSummary);
+            applyStorageFilters();
+            
+            if (allTenantStorages.length > 0 && allTenantStorages[0].updated_at) {
+                const dt = new Date(allTenantStorages[0].updated_at);
+                const syncEl = document.getElementById('storage-last-sync');
+                if (syncEl) {
+                    syncEl.innerHTML = `<i class="fas fa-clock" style="margin-right:4px;"></i> Actualizado: ${dt.toLocaleDateString('es-CL')} ${dt.toLocaleTimeString('es-CL', {hour:'2-digit', minute:'2-digit'})}`;
+                }
+            }
+        }
+    } catch (e) {
+        console.error("Error cargando almacenamiento:", e);
+    }
+}
+
+function renderStorageKPIs(s) {
+    const formatBytes = (b) => {
+        if (!b || b === 0) return '0 GB';
+        const gb = b / (1024**3);
+        if (gb >= 1024) return (gb / 1024).toFixed(2) + ' TB';
+        return gb.toFixed(1) + ' GB';
+    };
+
+    const totEl = document.getElementById('kpi-total-storage');
+    const tenEl = document.getElementById('kpi-total-tenants');
+    const locEl = document.getElementById('kpi-local-storage');
+    const cldEl = document.getElementById('kpi-cloud-storage');
+    const m365El = document.getElementById('kpi-m365-storage');
+
+    if (totEl) totEl.innerText = formatBytes(s.total_storage_bytes);
+    if (tenEl) tenEl.innerText = `${s.total_tenants || 0} clientes evaluados`;
+    if (locEl) locEl.innerText = formatBytes(s.total_local_bytes);
+    if (cldEl) cldEl.innerText = formatBytes(s.total_cloud_bytes);
+    if (m365El) m365El.innerText = formatBytes(s.total_m365_bytes);
+}
+
+function applyStorageFilters() {
+    const q = (document.getElementById('storage-search-input')?.value || '').toLowerCase().trim();
+    const quotaFilter = document.getElementById('storage-quota-filter')?.value || 'all';
+
+    let filtered = allTenantStorages.filter(t => {
+        if (q && !t.tenant_name.toLowerCase().includes(q)) return false;
+        if (quotaFilter === 'with_quota' && !t.quota_bytes) return false;
+        if (quotaFilter === 'flexible' && t.quota_bytes) return false;
+        if (quotaFilter === 'warning') {
+            if (!t.quota_bytes || t.usage_percent < 80) return false;
+        }
+        return true;
+    });
+
+    renderStorageTable(filtered);
+}
+
+function renderStorageTable(tenants) {
+    const tbody = document.getElementById('storage-table-body');
+    if (!tbody) return;
+
+    if (!tenants || tenants.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="7" style="padding:30px;text-align:center;color:var(--muted);">No se encontraron clientes con los filtros aplicados.</td></tr>`;
+        return;
+    }
+
+    const formatBytes = (b) => {
+        if (!b || b === 0) return '0 GB';
+        const gb = b / (1024**3);
+        if (gb >= 1024) return (gb / 1024).toFixed(2) + ' TB';
+        return gb.toFixed(1) + ' GB';
+    };
+
+    const maxTotal = Math.max(...allTenantStorages.map(t => t.total_bytes || 0), 1);
+
+    tbody.innerHTML = tenants.map(t => {
+        const totB = t.total_bytes || 0;
+        const locB = t.local_bytes || 0;
+        const cldB = t.cloud_bytes || 0;
+        const qB = t.quota_bytes;
+        const pct = t.usage_percent || 0.0;
+        const relBarWidth = Math.min(100, Math.round(totB / maxTotal * 100));
+
+        // Badges de cargas
+        const loadBadges = [];
+        if (t.vm_bytes > 0) loadBadges.push(`<span title="VMs: ${formatBytes(t.vm_bytes)}" style="background:rgba(59,130,246,0.15);color:#60a5fa;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;"><i class="fas fa-server"></i> VMs: ${formatBytes(t.vm_bytes)}</span>`);
+        if (t.server_bytes > 0) loadBadges.push(`<span title="Servidores: ${formatBytes(t.server_bytes)}" style="background:rgba(168,85,247,0.15);color:#c084fc;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;"><i class="fas fa-network-wired"></i> Srv: ${formatBytes(t.server_bytes)}</span>`);
+        if (t.workstation_bytes > 0) loadBadges.push(`<span title="Estaciones: ${formatBytes(t.workstation_bytes)}" style="background:rgba(234,179,8,0.15);color:#facc15;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;"><i class="fas fa-laptop"></i> PC: ${formatBytes(t.workstation_bytes)}</span>`);
+        if (t.m365_bytes > 0) loadBadges.push(`<span title="M365 Cloud: ${formatBytes(t.m365_bytes)}" style="background:rgba(16,185,129,0.15);color:#34d399;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;"><i class="fab fa-microsoft"></i> M365: ${formatBytes(t.m365_bytes)}</span>`);
+        if (loadBadges.length === 0) loadBadges.push(`<span style="color:var(--muted);font-size:11px;">Sin desglose</span>`);
+
+        // Cuota y Barra de progreso
+        let quotaHtml = '';
+        let statusBadge = '';
+        if (qB && qB > 0) {
+            const barCol = pct >= 95 ? 'var(--crit)' : (pct >= 80 ? 'var(--warn)' : 'var(--ok)');
+            quotaHtml = `
+                <div>
+                    <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px;">
+                        <span style="color:var(--text);font-weight:bold;">${formatBytes(totB)} / ${formatBytes(qB)}</span>
+                        <span style="color:${barCol};font-weight:bold;">${pct}%</span>
+                    </div>
+                    <div style="height:6px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden;">
+                        <div style="width:${Math.min(100, pct)}%;height:100%;background:${barCol};border-radius:3px;"></div>
+                    </div>
+                </div>
+            `;
+            if (pct >= 95) {
+                statusBadge = `<span style="background:rgba(239,68,68,0.2);color:#ef4444;padding:3px 8px;border-radius:6px;font-size:10px;font-weight:bold;">CRÍTICO</span>`;
+            } else if (pct >= 80) {
+                statusBadge = `<span style="background:rgba(245,158,11,0.2);color:#f59e0b;padding:3px 8px;border-radius:6px;font-size:10px;font-weight:bold;">RIESGO</span>`;
+            } else {
+                statusBadge = `<span style="background:rgba(16,185,129,0.2);color:#10b981;padding:3px 8px;border-radius:6px;font-size:10px;font-weight:bold;">NORMAL</span>`;
+            }
+        } else {
+            quotaHtml = `
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span style="color:var(--muted);font-size:12px;">Flexible / Sin Límite</span>
+                    <span style="font-size:10px;color:var(--muted);background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px;">Pay-as-you-go</span>
+                </div>
+            `;
+            statusBadge = `<span style="background:rgba(59,130,246,0.15);color:#60a5fa;padding:3px 8px;border-radius:6px;font-size:10px;font-weight:bold;">ACTIVO</span>`;
+        }
+
+        return `
+            <tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:14px 16px;">
+                    <div style="font-weight:700;color:var(--text);font-size:14px;">${t.tenant_name}</div>
+                    <div style="font-size:10px;color:var(--muted);margin-top:2px;">ID: ${t.tenant_id}</div>
+                </td>
+                <td style="padding:14px 16px;">
+                    <div style="font-weight:800;color:var(--text);font-size:14px;">${formatBytes(totB)}</div>
+                    <div style="width:80px;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;margin-top:4px;overflow:hidden;">
+                        <div style="width:${relBarWidth}%;height:100%;background:var(--primary);border-radius:2px;"></div>
+                    </div>
+                </td>
+                <td style="padding:14px 16px;">
+                    <span style="font-weight:600;color:#38bdf8;font-size:12px;">${formatBytes(locB)}</span>
+                </td>
+                <td style="padding:14px 16px;">
+                    <span style="font-weight:600;color:#a78bfa;font-size:12px;">${formatBytes(cldB)}</span>
+                </td>
+                <td style="padding:14px 16px;">
+                    <div style="display:flex;flex-wrap:wrap;gap:4px;">${loadBadges.join('')}</div>
+                </td>
+                <td style="padding:14px 16px;">${quotaHtml}</td>
+                <td style="padding:14px 16px;text-align:center;">${statusBadge}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+async function syncStorageData() {
+    const btn = document.getElementById('btn-sync-storage');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Sincronizando...`;
+    }
+    try {
+        const res = await fetch('/api/tenants/storage/sync', { method: 'POST' });
+        const json = await res.json();
+        if (json.status === 'ok') {
+            showToast(`Sincronización completada (${json.data.updated_count} clientes)`, 'success');
+            await loadStorageView();
+        } else {
+            showToast(json.error || "Error sincronizando almacenamiento", 'error');
+        }
+    } catch (e) {
+        showToast("Error de conexión al sincronizar", 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = `<i class="fas fa-rotate"></i> Sincronizar Acronis`;
+        }
+    }
 }
 
 function setColumns(n, persist = true) {
@@ -1768,6 +2232,365 @@ async function testChannel(ch) {
         btn.innerHTML = ch === 'telegram'
             ? '<i class="fas fa-paper-plane"></i> Enviar prueba'
             : '<i class="fas fa-envelope-circle-check"></i> Enviar prueba';
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Reports View & Management
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+let currentReportData = null;
+let selectedReportVmIds = new Set();
+let reportScope = 'visible'; // 'visible' | 'custom'
+
+async function initReportsView() {
+    const startInput = document.getElementById('rep-start-date');
+    const endInput = document.getElementById('rep-end-date');
+    if (!startInput.value || !endInput.value) {
+        setReportPreset(7, false);
+    }
+    initReportVmSelector();
+    await loadReportConfig();
+    await generateReportManual();
+}
+
+function initReportVmSelector() {
+    const visVms = allMachines.filter(v => v.visible !== 0);
+    const visCountEl = document.getElementById('rep-visible-count');
+    if (visCountEl) visCountEl.textContent = visVms.length;
+
+    // Si aún no hay selección personalizada, inicializar con las visibles
+    if (selectedReportVmIds.size === 0) {
+        visVms.forEach(v => selectedReportVmIds.add(v.vm_id || v.id));
+    }
+    const selCountEl = document.getElementById('rep-selected-count');
+    if (selCountEl) selCountEl.textContent = selectedReportVmIds.size;
+    renderReportVmList();
+}
+
+function onReportScopeChange() {
+    const isCustom = document.getElementById('rep-scope-custom')?.checked;
+    reportScope = isCustom ? 'custom' : 'visible';
+    const btn = document.getElementById('btn-toggle-vm-selector');
+    if (btn) btn.style.display = isCustom ? 'inline-flex' : 'none';
+    const panel = document.getElementById('rep-custom-vms-panel');
+    if (panel) panel.style.display = isCustom ? 'block' : 'none';
+    generateReportManual();
+}
+
+function toggleReportVmSelector() {
+    const p = document.getElementById('rep-custom-vms-panel');
+    if (!p) return;
+    p.style.display = p.style.display === 'none' ? 'block' : 'none';
+}
+
+function renderReportVmList() {
+    const container = document.getElementById('rep-vm-checkbox-list');
+    if (!container) return;
+    const search = (document.getElementById('rep-vm-search')?.value || '').toLowerCase();
+
+    const filtered = allMachines.filter(v => {
+        if (!search) return true;
+        const name = (v.name || '').toLowerCase();
+        const tenant = (v.tenant_name || '').toLowerCase();
+        return name.includes(search) || tenant.includes(search);
+    });
+
+    const info = document.getElementById('rep-selector-info');
+    if (info) info.textContent = `${selectedReportVmIds.size} de ${allMachines.length} seleccionados`;
+
+    container.innerHTML = filtered.map(v => {
+        const vid = v.vm_id || v.id;
+        const isChecked = selectedReportVmIds.has(vid);
+        return `
+        <label style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--card);border:1px solid ${isChecked ? 'rgba(59,130,246,0.5)' : 'var(--border)'};border-radius:6px;font-size:12px;cursor:pointer;user-select:none;">
+            <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleReportVm('${vid}')" style="accent-color:var(--accent);width:15px;height:15px;">
+            <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.2;">
+                <div style="font-weight:600;color:#f8fafc;">${v.name || vid}</div>
+                <div style="font-size:10px;color:var(--muted);">${v.tenant_name || 'Sin Cliente'}</div>
+            </div>
+        </label>`;
+    }).join('');
+}
+
+function filterReportVmList() {
+    renderReportVmList();
+}
+
+function toggleReportVm(vmId) {
+    if (selectedReportVmIds.has(vmId)) {
+        selectedReportVmIds.delete(vmId);
+    } else {
+        selectedReportVmIds.add(vmId);
+    }
+    const selCountEl = document.getElementById('rep-selected-count');
+    if (selCountEl) selCountEl.textContent = selectedReportVmIds.size;
+    renderReportVmList();
+    if (reportScope === 'custom') {
+        generateReportManual();
+    }
+}
+
+function selectReportVmsAll(selectAll) {
+    const search = (document.getElementById('rep-vm-search')?.value || '').toLowerCase();
+    allMachines.forEach(v => {
+        const vid = v.vm_id || v.id;
+        if (search) {
+            const name = (v.name || '').toLowerCase();
+            const tenant = (v.tenant_name || '').toLowerCase();
+            if (!name.includes(search) && !tenant.includes(search)) return;
+        }
+        if (selectAll) {
+            selectedReportVmIds.add(vid);
+        } else {
+            selectedReportVmIds.delete(vid);
+        }
+    });
+    const selCountEl = document.getElementById('rep-selected-count');
+    if (selCountEl) selCountEl.textContent = selectedReportVmIds.size;
+    renderReportVmList();
+    if (reportScope === 'custom') {
+        generateReportManual();
+    }
+}
+
+function getActiveReportVmIds() {
+    if (reportScope === 'custom') {
+        return Array.from(selectedReportVmIds);
+    }
+    return allMachines.filter(v => v.visible !== 0).map(v => v.vm_id || v.id);
+}
+
+function toggleReportConfig() {
+    const p = document.getElementById('report-config-panel');
+    const btn = document.getElementById('btn-toggle-rep-cfg');
+    const isHidden = p.style.display === 'none';
+    p.style.display = isHidden ? 'block' : 'none';
+    btn.classList.toggle('active', isHidden);
+}
+
+function onRepToggle() {
+    const en = document.getElementById('rep-enabled').checked;
+    const pill = document.getElementById('rep-status-pill');
+    pill.textContent = en ? 'Activo' : 'Desactivado';
+    pill.className = `status-pill ${en ? 'sp-on' : 'sp-off'}`;
+}
+
+async function loadReportConfig() {
+    try {
+        const r = await fetch('/api/reports/config');
+        const j = await r.json();
+        if (j.ok && j.data) {
+            const c = j.data;
+            document.getElementById('rep-enabled').checked = !!c.enabled;
+            onRepToggle();
+            document.getElementById('rep-day').value = c.day_of_week || 'mon';
+            document.getElementById('rep-time').value = c.time_utc4 || '08:00';
+            document.getElementById('rep-emails').value = (c.emails || []).join(', ');
+            document.getElementById('rep-local-warn').value = c.local_warn_pct || 85;
+            document.getElementById('rep-cloud-warn').value = c.cloud_warn_pct || 90;
+
+            if (c.selected_vm_ids && c.selected_vm_ids.length > 0) {
+                selectedReportVmIds = new Set(c.selected_vm_ids);
+                const selCountEl = document.getElementById('rep-selected-count');
+                if (selCountEl) selCountEl.textContent = selectedReportVmIds.size;
+                const custRadio = document.getElementById('rep-scope-custom');
+                if (custRadio) custRadio.checked = true;
+                const saveBox = document.getElementById('rep-save-selected-vms');
+                if (saveBox) saveBox.checked = true;
+                reportScope = 'custom';
+                const btn = document.getElementById('btn-toggle-vm-selector');
+                if (btn) btn.style.display = 'inline-flex';
+                renderReportVmList();
+            }
+        }
+    } catch(e) {
+        console.error("Error cargando config de reportes:", e);
+    }
+}
+
+async function saveReportConfig() {
+    const saveVms = document.getElementById('rep-save-selected-vms')?.checked;
+    const payload = {
+        enabled: document.getElementById('rep-enabled').checked,
+        day_of_week: document.getElementById('rep-day').value,
+        time_utc4: document.getElementById('rep-time').value,
+        emails: document.getElementById('rep-emails').value,
+        selected_vm_ids: saveVms ? getActiveReportVmIds() : [],
+        local_warn_pct: parseInt(document.getElementById('rep-local-warn').value) || 85,
+        cloud_warn_pct: parseInt(document.getElementById('rep-cloud-warn').value) || 90
+    };
+    try {
+        const r = await fetch('/api/reports/config', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        const j = await r.json();
+        if (j.ok) {
+            toast('✅ Configuración de programación guardada', 'fa-circle-check', '#10b981');
+            const msg = document.getElementById('rep-cfg-msg');
+            msg.textContent = 'Guardado correctamente.';
+            msg.style.display = 'inline';
+            setTimeout(() => { msg.style.display = 'none'; }, 3000);
+        } else {
+            toast(`❌ ${j.error}`, 'fa-circle-xmark', '#ef4444');
+        }
+    } catch(e) {
+        toast(`Error: ${e.message}`, 'fa-circle-xmark', '#ef4444');
+    }
+}
+
+function setReportPreset(days, triggerGenerate = true) {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(end.getDate() - days);
+
+    document.getElementById('rep-start-date').value = start.toISOString().split('T')[0];
+    document.getElementById('rep-end-date').value = end.toISOString().split('T')[0];
+
+    ['btn-preset-7d', 'btn-preset-14d', 'btn-preset-30d'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.remove('active');
+    });
+
+    const activeBtn = days === 7 ? 'btn-preset-7d' : (days === 14 ? 'btn-preset-14d' : 'btn-preset-30d');
+    const el = document.getElementById(activeBtn);
+    if (el) el.classList.add('active');
+
+    if (triggerGenerate) {
+        generateReportManual();
+    }
+}
+
+async function generateReportManual() {
+    const container = document.getElementById('report-view-container');
+    container.innerHTML = `
+        <div style="text-align:center;padding:50px 20px;color:var(--muted);">
+            <i class="fas fa-spinner fa-spin" style="font-size:24px;margin-bottom:12px;"></i>
+            <p>Generando reporte ejecutivo...</p>
+        </div>`;
+
+    const startVal = document.getElementById('rep-start-date').value;
+    const endVal = document.getElementById('rep-end-date').value;
+
+    const startIso = startVal ? new Date(startVal + 'T00:00:00').toISOString() : null;
+    const endIso = endVal ? new Date(endVal + 'T23:59:59').toISOString() : null;
+    const vmIds = getActiveReportVmIds();
+
+    try {
+        const r = await fetch('/api/reports/generate', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                start_date: startIso,
+                end_date: endIso,
+                vm_ids: vmIds
+            })
+        });
+        const j = await r.json();
+        if (j.ok && j.data) {
+            currentReportData = j.data.report_data;
+            container.innerHTML = j.data.html;
+        } else {
+            container.innerHTML = `
+                <div style="padding:30px;color:#ef4444;text-align:center;">
+                    <i class="fas fa-triangle-exclamation" style="font-size:24px;margin-bottom:8px;"></i>
+                    <p>Error generando el informe: ${j.error || 'Error desconocido'}</p>
+                </div>`;
+        }
+    } catch(e) {
+        container.innerHTML = `
+            <div style="padding:30px;color:#ef4444;text-align:center;">
+                <i class="fas fa-triangle-exclamation" style="font-size:24px;margin-bottom:8px;"></i>
+                <p>Error de conexión: ${e.message}</p>
+            </div>`;
+    }
+}
+
+async function sendReportEmailManual() {
+    const btn = document.getElementById('btn-send-report-now');
+    const startVal = document.getElementById('rep-start-date').value;
+    const endVal = document.getElementById('rep-end-date').value;
+
+    const startIso = startVal ? new Date(startVal + 'T00:00:00').toISOString() : null;
+    const endIso = endVal ? new Date(endVal + 'T23:59:59').toISOString() : null;
+    const vmIds = getActiveReportVmIds();
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enviando...';
+
+    try {
+        const r = await fetch('/api/reports/send', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                start_date: startIso,
+                end_date: endIso,
+                vm_ids: vmIds
+            })
+        });
+        const j = await r.json();
+        if (j.ok) {
+            const rec = (j.data?.recipients || []).join(', ');
+            toast(`✅ Reporte enviado exitosamente a: ${rec}`, 'fa-circle-check', '#10b981');
+        } else {
+            toast(`❌ ${j.error}`, 'fa-circle-xmark', '#ef4444');
+        }
+    } catch(e) {
+        toast(`Error: ${e.message}`, 'fa-circle-xmark', '#ef4444');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-paper-plane"></i> Enviar por Correo';
+    }
+}
+
+async function downloadReportPDF() {
+    const btn = document.getElementById('btn-download-pdf');
+    const origHtml = btn.innerHTML;
+    const startVal = document.getElementById('rep-start-date').value;
+    const endVal = document.getElementById('rep-end-date').value;
+
+    const startIso = startVal ? new Date(startVal + 'T00:00:00').toISOString() : null;
+    const endIso = endVal ? new Date(endVal + 'T23:59:59').toISOString() : null;
+    const vmIds = getActiveReportVmIds();
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generando PDF...';
+
+    try {
+        const r = await fetch('/api/reports/export-pdf', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                start_date: startIso,
+                end_date: endIso,
+                vm_ids: vmIds
+            })
+        });
+
+        if (!r.ok) {
+            const errJson = await r.json().catch(() => ({}));
+            throw new Error(errJson.error || 'Error al compilar el PDF en el servidor');
+        }
+
+        const blob = await r.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        const nowStr = new Date().toISOString().split('T')[0];
+        a.download = `Reporte_Respaldos_Backupcode_${nowStr}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        a.remove();
+        toast('PDF descargado con éxito', 'fa-circle-check', '#10b981');
+    } catch(e) {
+        console.error(e);
+        toast(`Error generando PDF: ${e.message}`, 'fa-circle-xmark', '#ef4444');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = origHtml;
     }
 }
 

@@ -33,6 +33,7 @@ import os
 import sys
 import time
 import json
+import re
 import requests
 import smtplib
 from email.mime.text import MIMEText
@@ -765,7 +766,6 @@ def check_acronis_alerts(now_iso: str) -> int:
                            or alert.get('details', {}).get('context_id')
                            or alert_id)
             notif_key   = f"ACRONIS_{atype}_{resource_id}"
-
             snd, _ = should_send(resource_id, notif_key, sev, now_iso)
             if snd:
                 msg_tg = msg_acronis_alert(alert)
@@ -789,6 +789,1074 @@ def check_acronis_alerts(now_iso: str) -> int:
     return sent
 
 
+# ─────────────────────── Módulo de Reportes Ejecutivos ──────────────────────
+
+def format_bytes_human(num_bytes: int) -> str:
+    """Convierte bytes a formato legible (B, KB, MB, GB, TB)."""
+    if not num_bytes or num_bytes <= 0:
+        return "0 GB"
+    val = float(num_bytes)
+    for unit in ['B', 'KB', 'MB', 'GB', 'TB', 'PB']:
+        if abs(val) < 1024.0:
+            return f"{val:.1f} {unit}"
+        val /= 1024.0
+    return f"{val:.1f} PB"
+
+
+def format_duration_human(seconds: int) -> str:
+    """Convierte segundos a formato amigable (ej: 45s, 14m, 1h 20m)."""
+    if not seconds or seconds <= 0:
+        return "< 1 min"
+    sec = int(seconds)
+    if sec < 60:
+        return f"{sec}s"
+    m = sec // 60
+    rem_s = sec % 60
+    if m < 60:
+        return f"{m}m {rem_s}s" if rem_s > 0 else f"{m}m"
+    h = m // 60
+    rem_m = m % 60
+    return f"{h}h {rem_m}m"
+
+
+def find_best_tenant_storage(t_name: str, stor_list: list) -> dict:
+    """Encuentra el mejor registro de almacenamiento para un tenant, resolviendo si una unidad
+    hija reporta 0 bytes locales mientras el cliente padre concentra los bytes reales de NTFS."""
+    if not t_name or not stor_list:
+        return None
+    t_clean = re.sub(r'[^a-z0-9]', '', t_name.lower())
+    candidates = []
+    for ts in stor_list:
+        ts_name = ts.get('tenant_name', '')
+        ts_clean = re.sub(r'[^a-z0-9]', '', ts_name.lower())
+        if ts_name.lower().strip() == t_name.lower().strip() or ts_clean == t_clean:
+            candidates.append(ts)
+        elif len(t_clean) >= 4 and (t_clean in ts_clean or ts_clean in t_clean):
+            candidates.append(ts)
+        elif 'integra' in t_clean and 'integra' in ts_clean:
+            candidates.append(ts)
+
+    if not candidates:
+        return None
+
+    # Si hay registros con almacenamiento local reportado (>0), preferir el nivel customer o mayor local_bytes
+    with_local = [c for c in candidates if c.get('local_bytes', 0) > 0]
+    if with_local:
+        with_local.sort(key=lambda x: (x.get('kind') == 'customer', x.get('local_bytes', 0)), reverse=True)
+        return with_local[0]
+
+    candidates.sort(key=lambda x: x.get('total_bytes', 0), reverse=True)
+    return candidates[0]
+
+
+def generate_weekly_report_data(start_iso: str = None, end_iso: str = None, tenant_id: str = None, vm_ids: list = None) -> dict:
+    """
+    Genera el diccionario de datos consolidados para el reporte ejecutivo.
+    Soporta filtrado exclusivo por máquinas seleccionadas (vm_ids).
+    """
+    now = datetime.now(timezone.utc)
+    if not end_iso:
+        end_iso = now.isoformat()
+    if not start_iso:
+        start_iso = (now - timedelta(days=7)).isoformat()
+
+    cfg = db.get_report_config()
+    # Si no se pasan vm_ids explícitos, verificar si hay máquinas preconfiguradas
+    if vm_ids is None:
+        saved_vms = cfg.get('selected_vm_ids', [])
+        if saved_vms:
+            vm_ids = saved_vms
+
+    metrics = db.get_backup_metrics(start_iso, end_iso, tenant_id, vm_ids=vm_ids)
+    storage_list = db.get_latest_storage_metrics()
+    machines = metrics.get('machines', [])
+
+    # Cargar almacenamiento por tenant para enriquecer máquinas y clientes
+    tenant_storages = db.get_all_tenant_storages()
+    stor_by_name = {}
+    for ts in tenant_storages:
+        raw_n = ts['tenant_name']
+        stor_by_name[raw_n.lower().strip()] = ts
+        clean_k = re.sub(r'[^a-z0-9]', '', raw_n.lower())
+        if clean_k:
+            stor_by_name[clean_k] = ts
+        if ts.get('tenant_id'):
+            stor_by_name[str(ts['tenant_id']).strip()] = ts
+
+    # 1. Rendimiento y Volumen (Punto 1)
+    total_volume_str = format_bytes_human(metrics.get('total_size_bytes', 0))
+    avg_duration_str = format_duration_human(metrics.get('avg_duration_seconds', 0))
+    total_duration_str = format_duration_human(metrics.get('total_duration_seconds', 0))
+
+    # 2. Desglose y Clasificación de Riesgo (Punto 3)
+    no_history = []
+    overdue_24h = []
+    overdue_48h = []
+    no_plan = []
+    low_cyberfit = []
+
+    servers_detail = []
+    tenants_map = {}
+
+    for m in machines:
+        vm_name = m.get('name') or m.get('vm_id')
+        tenant = m.get('tenant_name', 'N/A')
+        plan = m.get('protection_plan') or 'Sin Plan'
+        last_succ = m.get('last_backup_success')
+        hs = hours_since(last_succ)
+        score = int(m.get('cyberfit_score') or 0)
+        p_status = (m.get('protection_status') or 'unknown').upper()
+        if p_status == 'OK' and hs is not None and hs >= 25:
+            p_status = 'WARNING'
+
+        # Evaluación de riesgos
+        if not last_succ:
+            no_history.append({'name': vm_name, 'tenant': tenant, 'reason': 'Sin respaldo histórico registrado'})
+        elif hs is not None:
+            if hs >= 48:
+                overdue_48h.append({'name': vm_name, 'tenant': tenant, 'hours': int(hs), 'reason': f'Sin respaldo hace {int(hs)}h (>48h)'})
+            elif hs >= 25:
+                overdue_24h.append({'name': vm_name, 'tenant': tenant, 'hours': int(hs), 'reason': f'Sin respaldo hace {int(hs)}h (>24h)'})
+
+        if not m.get('protection_plan') or m.get('protection_plan') in ('Sin Plan', 'No plan'):
+            no_plan.append({'name': vm_name, 'tenant': tenant, 'reason': 'Sin plan de protección asignado'})
+
+        if score > 0 and score < CYBERFIT_THR:
+            low_cyberfit.append({'name': vm_name, 'tenant': tenant, 'score': score, 'reason': f'CyberFit Score bajo ({score}/{CYBERFIT_THR})'})
+
+        # Estado de antigüedad
+        if hs is not None:
+            if hs < 24:
+                age_str = f"Hace {int(hs)}h"
+                age_status = "ok"
+            elif hs < 48:
+                age_str = f"Hace {int(hs)}h ⚠️"
+                age_status = "warn"
+            else:
+                age_str = f"Hace {int(hs // 24)}d {int(hs % 24)}h 🔴"
+                age_status = "crit"
+        else:
+            age_str = "Sin registro histórico"
+            age_status = "crit"
+
+        # Duración formateada
+        dur_sec = m.get('latest_duration_seconds', 0)
+        dur_str = format_duration_human(dur_sec) if dur_sec > 0 else "< 1 min"
+
+        # Tamaño Local (NTFS) vs Cloud
+        loc_b = m.get('latest_local_bytes', 0)
+        cld_b = m.get('latest_cloud_bytes', 0)
+        plan_str = plan.lower()
+
+        has_local_plan = any(k in plan_str for k in ('[local]', 'local', 'ntfs', 'smb', 'disco local', 'carpeta local'))
+        has_cloud_plan = any(k in plan_str for k in ('cloud', 'acronis')) or (';' in plan_str and has_local_plan) or (not has_local_plan)
+
+        # Si el plan explícitamente incluye respaldo local y loc_b es 0, usar el tamaño de respaldo de la máquina
+        raw_sz = m.get('latest_size_bytes', 0) or int((m.get('backup_size_gb') or 0) * (1024**3))
+        if has_local_plan and loc_b == 0 and raw_sz > 0:
+            loc_b = raw_sz
+        if has_cloud_plan and cld_b == 0 and raw_sz > 0:
+            cld_b = raw_sz
+
+        ts_match = find_best_tenant_storage(tenant, tenant_storages)
+
+        if loc_b == 0 and cld_b == 0 and ts_match:
+            tot_vms_in_t = max(1, sum(1 for x in machines if x.get('tenant_name') == tenant))
+            if ts_match.get('local_bytes', 0) > 0 and ts_match.get('cloud_bytes', 0) == 0:
+                loc_b = int(ts_match['local_bytes'] / tot_vms_in_t)
+            elif ts_match.get('cloud_bytes', 0) > 0 and ts_match.get('local_bytes', 0) == 0:
+                cld_b = int((ts_match.get('vm_bytes') or ts_match['cloud_bytes']) / tot_vms_in_t)
+            elif ts_match.get('local_bytes', 0) > 0 and ts_match.get('cloud_bytes', 0) > 0:
+                loc_b = int(ts_match['local_bytes'] / tot_vms_in_t)
+                cld_b = int(ts_match['cloud_bytes'] / tot_vms_in_t)
+
+        size_tot = loc_b + cld_b
+
+        # Próximo backup
+        next_b = m.get('next_backup')
+        next_b_str = fmt_ts(next_b) if next_b else "No programado"
+
+        servers_detail.append({
+            'vm_id': m.get('vm_id'),
+            'name': vm_name,
+            'tenant_name': tenant,
+            'plan_name': plan,
+            'backup_count': m.get('backup_count', 0),
+            'backup_count_str': m.get('backup_count_str', '0'),
+            'last_backup_formatted': fmt_ts(last_succ),
+            'next_backup_formatted': next_b_str,
+            'age_str': age_str,
+            'age_status': age_status,
+            'duration_str': dur_str,
+            'size_local_bytes': loc_b,
+            'size_cloud_bytes': cld_b,
+            'size_local_str': format_bytes_human(loc_b) if loc_b > 0 else "0 GB",
+            'size_cloud_str': format_bytes_human(cld_b) if cld_b > 0 else "0 GB",
+            'size_str': format_bytes_human(size_tot) if size_tot > 0 else "0 GB",
+            'agent_version': m.get('agent_version') or 'Desconocido',
+            'cyberfit': score,
+            'status': p_status,
+            'latest_result': m.get('latest_result', 'success'),
+            'latest_error': m.get('latest_error')
+        })
+
+        # Agrupación por Tenant (Punto 4)
+        if tenant not in tenants_map:
+            tenants_map[tenant] = {
+                'tenant_name': tenant,
+                'total_vms': 0,
+                'ok_count': 0,
+                'warn_count': 0,
+                'crit_count': 0,
+                'total_bytes': 0,
+            }
+        tenants_map[tenant]['total_vms'] += 1
+        tenants_map[tenant]['total_bytes'] += size_tot
+        if p_status == 'OK':
+            tenants_map[tenant]['ok_count'] += 1
+        elif p_status == 'WARNING':
+            tenants_map[tenant]['warn_count'] += 1
+        else:
+            tenants_map[tenant]['crit_count'] += 1
+
+    # Formatear resumen por Tenant con datos de almacenamiento y cuotas
+    for ts in tenant_storages:
+        raw_n = ts['tenant_name']
+        stor_by_name[raw_n.lower().strip()] = ts
+        clean_k = re.sub(r'[^a-z0-9]', '', raw_n.lower())
+        if clean_k:
+            stor_by_name[clean_k] = ts
+        if ts.get('tenant_id'):
+            stor_by_name[str(ts['tenant_id']).strip()] = ts
+
+    tenants_summary = []
+    for t_data in tenants_map.values():
+        tot = t_data['total_vms']
+        ok_c = t_data['ok_count']
+        t_rate = round((ok_c / tot * 100.0), 1) if tot > 0 else 100.0
+        t_name = t_data['tenant_name']
+        t_clean = re.sub(r'[^a-z0-9]', '', t_name.lower())
+
+        # Buscar coincidencia en tenant_storage priorizando resolución de niveles con almacenamiento local
+        ts_match = find_best_tenant_storage(t_name, tenant_storages)
+
+        tot_bytes = ts_match['total_bytes'] if ts_match and ts_match.get('total_bytes') else t_data['total_bytes']
+        loc_bytes = ts_match.get('local_bytes', 0) if ts_match else 0
+        cld_bytes = ts_match.get('cloud_bytes', 0) if ts_match else max(0, tot_bytes - loc_bytes)
+        q_bytes = ts_match.get('quota_bytes') if ts_match else None
+        q_pct = ts_match.get('usage_percent', 0.0) if ts_match else 0.0
+
+        tenants_summary.append({
+            'tenant_name': t_name,
+            'total_vms': tot,
+            'success_rate': t_rate,
+            'ok_count': ok_c,
+            'issues_count': t_data['warn_count'] + t_data['crit_count'],
+            'total_volume_str': format_bytes_human(tot_bytes),
+            'local_storage_str': format_bytes_human(loc_bytes),
+            'cloud_storage_str': format_bytes_human(cld_bytes),
+            'quota_str': format_bytes_human(q_bytes) if q_bytes else "Flexible",
+            'usage_percent': q_pct,
+            'status': 'OK' if t_rate >= 90 else ('WARNING' if t_rate >= 70 else 'CRITICAL')
+        })
+    tenants_summary.sort(key=lambda x: x['tenant_name'])
+
+    # Procesar almacenamiento
+    storages_processed = []
+    local_warn_pct = cfg.get('local_warn_pct', 85)
+    cloud_warn_pct = cfg.get('cloud_warn_pct', 90)
+
+    for st in storage_list:
+        st_type = st.get('storage_type', 'local_ntfs')
+        pct = st.get('usage_percent', 0.0)
+        thr = local_warn_pct if st_type == 'local_ntfs' else cloud_warn_pct
+        is_warning = pct >= thr
+
+        storages_processed.append({
+            'name': st.get('storage_name'),
+            'type': st_type,
+            'type_label': 'Almacenamiento Local (NTFS)' if st_type == 'local_ntfs' else 'Almacenamiento Cloud (Acronis)',
+            'tenant_name': st.get('tenant_name'),
+            'total_str': format_bytes_human(st.get('total_bytes', 0)),
+            'used_str': format_bytes_human(st.get('used_bytes', 0)),
+            'free_str': format_bytes_human(st.get('free_bytes', 0)),
+            'usage_percent': pct,
+            'is_warning': is_warning,
+            'threshold': thr,
+            'timestamp': fmt_ts(st.get('timestamp'))
+        })
+
+    return {
+        'period_start': fmt_ts(start_iso),
+        'period_end': fmt_ts(end_iso),
+        'generated_at': now_chile().strftime('%d/%m/%Y %H:%M'),
+        'total_machines': len(machines),
+        'is_filtered_selection': bool(vm_ids and len(vm_ids) > 0),
+        'total_executions': metrics.get('total_executions', 0),
+        'success_count': metrics.get('success_count', 0),
+        'warning_count': metrics.get('warning_count', 0),
+        'failed_count': metrics.get('failed_count', 0),
+        'success_rate': metrics.get('success_rate', 100.0),
+        'total_volume_str': total_volume_str,
+        'avg_duration_str': avg_duration_str,
+        'total_duration_str': total_duration_str,
+        'plans_distribution': metrics.get('plans_distribution', {}),
+        'affected_machines': metrics.get('affected_machines', []),
+        'risk_summary': {
+            'no_history': no_history,
+            'overdue_48h': overdue_48h,
+            'overdue_24h': overdue_24h,
+            'no_plan': no_plan,
+            'low_cyberfit': low_cyberfit,
+            'total_risks': len(no_history) + len(overdue_48h) + len(overdue_24h) + len(no_plan)
+        },
+        'tenants_summary': tenants_summary,
+        'servers_detail': servers_detail,
+        'storages': storages_processed
+    }
+
+
+def get_backupcode_logo_base64() -> str:
+    """Retorna el logo de Backupcode codificado en base64 para embeber en HTML/PDF."""
+    logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'backupcode_logo.png')
+    if os.path.exists(logo_path):
+        try:
+            with open(logo_path, 'rb') as f:
+                return "data:image/png;base64," + b64encode(f.read()).decode('utf-8')
+        except Exception:
+            return ""
+    return ""
+
+
+def render_report_html(data: dict, for_pdf: bool = False) -> str:
+    """Genera la plantilla HTML ejecutiva completa con puntos 1, 2, 3 y 4 con branding de Backupcode."""
+    rate = data.get('success_rate', 100.0)
+    rate_color = "#10b981" if rate >= 95 else ("#f59e0b" if rate >= 80 else "#ef4444")
+    logo_b64 = get_backupcode_logo_base64()
+
+    # Scope badge
+    is_filt = data.get('is_filtered_selection')
+    scope_badge = f"""<span style="display:inline-block;padding:4px 10px;background:#3b82f622;color:#60a5fa;border:1px solid #3b82f655;border-radius:6px;font-size:12px;font-weight:600;margin-top:4px;">
+      🎯 Alcance: {data.get('total_machines',0)} máquinas seleccionadas
+    </span>""" if is_filt else f"""<span style="display:inline-block;padding:4px 10px;background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:6px;font-size:12px;font-weight:600;margin-top:4px;">
+      🌐 Alcance: Todos los equipos visibles ({data.get('total_machines',0)})
+    </span>"""
+
+    # Logo HTML
+    logo_html = f"""<td width="75" style="vertical-align:middle;padding-right:16px;">
+      <img src="{logo_b64}" width="65" style="width:65px;display:block;" alt="Backupcode" />
+    </td>""" if logo_b64 else ""
+
+    # CSS específico para PDF
+    pdf_style = """
+    @page {
+      size: a4 portrait;
+      margin: 8mm;
+    }
+    table {
+      page-break-inside: auto;
+    }
+    tr {
+      page-break-inside: avoid;
+      page-break-after: auto;
+    }
+    thead {
+      display: table-header-group;
+    }
+    """ if for_pdf else ""
+
+    # 1. KPIs de Rendimiento y Volumen (Punto 1)
+    kpis_html = f"""
+    <table width="100%" cellspacing="0" cellpadding="0" style="margin-bottom:24px;">
+      <tr>
+        <td width="16%" style="padding:4px;">
+          <div style="background:#1e293b;border:1px solid #334155;border-radius:10px;padding:12px;text-align:center;">
+            <div style="font-size:22px;font-weight:800;color:#ffffff;">{data.get('total_machines',0)}</div>
+            <div style="font-size:11px;color:#94a3b8;margin-top:2px;">Equipos Evaluados</div>
+          </div>
+        </td>
+        <td width="16%" style="padding:4px;">
+          <div style="background:#1e293b;border:1px solid #334155;border-radius:10px;padding:12px;text-align:center;">
+            <div style="font-size:22px;font-weight:800;color:{rate_color};">{data.get('success_rate',100.0)}%</div>
+            <div style="font-size:11px;color:#94a3b8;margin-top:2px;">Tasa de Éxito</div>
+          </div>
+        </td>
+        <td width="20%" style="padding:4px;">
+          <div style="background:#1e293b;border:1px solid #334155;border-radius:10px;padding:12px;text-align:center;">
+            <div style="font-size:20px;font-weight:800;color:#38bdf8;">{data.get('total_volume_str','0 GB')}</div>
+            <div style="font-size:11px;color:#94a3b8;margin-top:2px;">Volumen Total Procesado</div>
+          </div>
+        </td>
+        <td width="16%" style="padding:4px;">
+          <div style="background:#1e293b;border:1px solid #334155;border-radius:10px;padding:12px;text-align:center;">
+            <div style="font-size:20px;font-weight:800;color:#a78bfa;">{data.get('avg_duration_str','< 1m')}</div>
+            <div style="font-size:11px;color:#94a3b8;margin-top:2px;">Duración Promedio</div>
+          </div>
+        </td>
+        <td width="16%" style="padding:4px;">
+          <div style="background:#1e293b;border:1px solid #334155;border-radius:10px;padding:12px;text-align:center;">
+            <div style="font-size:20px;font-weight:800;color:#10b981;">{data.get('success_count',0)}</div>
+            <div style="font-size:11px;color:#94a3b8;margin-top:2px;">Respaldos Exitosos</div>
+          </div>
+        </td>
+        <td width="16%" style="padding:4px;">
+          <div style="background:#1e293b;border:1px solid #334155;border-radius:10px;padding:12px;text-align:center;">
+            <div style="font-size:20px;font-weight:800;color:{'#ef4444' if data.get('failed_count',0) > 0 else '#94a3b8'};">{data.get('failed_count',0)}</div>
+            <div style="font-size:11px;color:#94a3b8;margin-top:2px;">Respaldos Fallidos</div>
+          </div>
+        </td>
+      </tr>
+    </table>"""
+
+    # 2. Resumen por Cliente / Tenant con Almacenamiento y Cuotas
+    t_rows = ""
+    for t in data.get('tenants_summary', []):
+        t_col = "#10b981" if t['status'] == 'OK' else ("#f59e0b" if t['status'] == 'WARNING' else "#ef4444")
+        t_rows += f"""
+        <tr style="border-bottom:1px solid #334155;">
+          <td style="padding:9px 12px;font-weight:600;color:#f8fafc;">{t['tenant_name']}</td>
+          <td style="padding:9px 12px;text-align:center;color:#cbd5e1;">{t['total_vms']}</td>
+          <td style="padding:9px 12px;text-align:center;font-weight:bold;color:{t_col};">{t['success_rate']}%</td>
+          <td style="padding:9px 12px;text-align:center;font-weight:bold;color:#f8fafc;">{t['total_volume_str']}</td>
+          <td style="padding:9px 12px;text-align:center;color:#94a3b8;font-size:11px;">{t['local_storage_str']}</td>
+          <td style="padding:9px 12px;text-align:center;color:#38bdf8;font-size:11px;font-weight:bold;">{t['cloud_storage_str']}</td>
+          <td style="padding:9px 12px;text-align:center;color:#a78bfa;font-size:11px;">{t['quota_str']}</td>
+          <td style="padding:9px 12px;text-align:center;">
+            <span style="background:{t_col}22;color:{t_col};padding:2px 8px;border-radius:4px;font-size:10px;font-weight:bold;">{t['status']}</span>
+          </td>
+        </tr>"""
+
+    tenants_html = f"""
+    <div style="margin-bottom:28px;border:1px solid #334155;border-radius:10px;overflow-x:auto;">
+      <table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;font-size:12px;min-width:650px;">
+        <thead>
+          <tr style="background:#1e293b;color:#94a3b8;text-align:left;font-size:11px;">
+            <th style="padding:10px 12px;">Cliente / Tenant</th>
+            <th style="padding:10px 12px;text-align:center;">Equipos</th>
+            <th style="padding:10px 12px;text-align:center;">Tasa Éxito</th>
+            <th style="padding:10px 12px;text-align:center;">Almacenamiento Total</th>
+            <th style="padding:10px 12px;text-align:center;">Local NTFS</th>
+            <th style="padding:10px 12px;text-align:center;">Cloud Acronis</th>
+            <th style="padding:10px 12px;text-align:center;">Cuota / Límite</th>
+            <th style="padding:10px 12px;text-align:center;">Estado</th>
+          </tr>
+        </thead>
+        <tbody>{t_rows}</tbody>
+      </table>
+    </div>"""
+
+    # 3. Equipos en Riesgo o Afectados (Punto 3)
+    risk = data.get('risk_summary', {})
+    total_r = risk.get('total_risks', 0)
+    risk_cards_html = ""
+    if total_r > 0:
+        items_html = ""
+        for it in risk.get('no_history', []):
+            items_html += f"""<li style="margin-bottom:6px;color:#fca5a5;"><strong>{it['name']}</strong> ({it['tenant']}) — {it['reason']}</li>"""
+        for it in risk.get('overdue_48h', []):
+            items_html += f"""<li style="margin-bottom:6px;color:#f87171;"><strong>{it['name']}</strong> ({it['tenant']}) — {it['reason']}</li>"""
+        for it in risk.get('overdue_24h', []):
+            items_html += f"""<li style="margin-bottom:6px;color:#fcd34d;"><strong>{it['name']}</strong> ({it['tenant']}) — {it['reason']}</li>"""
+        for it in risk.get('no_plan', []):
+            items_html += f"""<li style="margin-bottom:6px;color:#cbd5e1;"><strong>{it['name']}</strong> ({it['tenant']}) — {it['reason']}</li>"""
+
+        risk_cards_html = f"""
+        <div style="background:rgba(239,68,68,0.08);border:1px solid #ef444455;border-radius:10px;padding:16px;margin-bottom:28px;">
+          <div style="display:flex;align-items:center;margin-bottom:10px;">
+            <span style="background:#ef4444;color:#ffffff;font-size:11px;font-weight:bold;padding:3px 8px;border-radius:4px;margin-right:8px;">
+              ⚠️ {total_r} CONDICIONES DE RIESGO DETECTADAS
+            </span>
+            <span style="font-size:12px;color:#cbd5e1;">Atención prioritaria requerida sobre los equipos seleccionados</span>
+          </div>
+          <ul style="margin:0;padding-left:20px;font-size:13px;color:#f1f5f9;">
+            {items_html}
+          </ul>
+        </div>"""
+    else:
+        risk_cards_html = """
+        <div style="background:rgba(16,185,129,0.1);border:1px solid #10b98144;border-radius:10px;padding:14px 18px;margin-bottom:28px;color:#10b981;font-size:13px;">
+          ✅ <strong>Excelente:</strong> Todos los equipos seleccionados cuentan con respaldo al día, planes asignados y sin atrasos detectados.
+        </div>"""
+
+    # 4. Tabla Técnica de Servidores / BBDD Completa (Punto 2)
+    srv_rows = ""
+    for srv in data.get('servers_detail', []):
+        age_col = "#10b981" if srv['age_status'] == 'ok' else ("#f59e0b" if srv['age_status'] == 'warn' else "#ef4444")
+        st_col = "#10b981" if srv['status'] == 'OK' else ("#f59e0b" if srv['status'] == 'WARNING' else "#ef4444")
+        cyb_score = srv['cyberfit']
+        cyb_col = "#10b981" if cyb_score >= CYBERFIT_THR else ("#f59e0b" if cyb_score > 0 else "#64748b")
+
+        srv_rows += f"""
+        <tr style="border-bottom:1px solid #334155;">
+          <td style="padding:10px 8px;font-weight:bold;color:#f8fafc;">{srv['name']}</td>
+          <td style="padding:10px 8px;color:#94a3b8;font-size:11px;">{srv['tenant_name']}</td>
+          <td style="padding:10px 8px;color:#cbd5e1;font-size:11px;">{srv['plan_name']}</td>
+          <td style="padding:10px 8px;text-align:center;font-size:11px;font-weight:bold;color:#f8fafc;white-space:nowrap;">{srv.get('backup_count_str', '0')}</td>
+          <td style="padding:10px 8px;color:#cbd5e1;font-size:11px;">{srv['last_backup_formatted']}</td>
+          <td style="padding:10px 8px;"><span style="color:{age_col};font-weight:bold;font-size:11px;">{srv['age_str']}</span></td>
+          <td style="padding:10px 8px;text-align:center;color:#94a3b8;font-size:11px;font-weight:600;">{srv['size_local_str']}</td>
+          <td style="padding:10px 8px;text-align:center;color:#38bdf8;font-size:11px;font-weight:bold;">{srv['size_cloud_str']}</td>
+          <td style="padding:10px 8px;color:#a78bfa;font-size:11px;">{srv['duration_str']}</td>
+          <td style="padding:10px 8px;color:#94a3b8;font-size:11px;">{srv['next_backup_formatted']}</td>
+          <td style="padding:10px 8px;color:#94a3b8;font-size:11px;">{srv['agent_version']}</td>
+          <td style="padding:10px 8px;text-align:center;"><span style="color:{cyb_col};font-weight:bold;font-size:11px;">{cyb_score}</span></td>
+          <td style="padding:10px 8px;text-align:center;"><span style="background:{st_col}22;color:{st_col};padding:2px 6px;border-radius:4px;font-size:10px;font-weight:bold;">{srv['status']}</span></td>
+        </tr>"""
+
+    tech_table_html = f"""
+    <div style="margin-bottom:28px;border:1px solid #334155;border-radius:10px;overflow-x:auto;">
+      <table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;font-size:12px;min-width:750px;">
+        <thead>
+          <tr style="background:#1e293b;color:#94a3b8;text-align:left;font-size:11px;">
+            <th style="padding:10px 8px;">Equipo / VM</th>
+            <th style="padding:10px 8px;">Cliente</th>
+            <th style="padding:10px 8px;">Plan</th>
+            <th style="padding:10px 8px;text-align:center;">Respaldos</th>
+            <th style="padding:10px 8px;">Último Respaldo</th>
+            <th style="padding:10px 8px;">Antigüedad</th>
+            <th style="padding:10px 8px;text-align:center;">Local (NTFS)</th>
+            <th style="padding:10px 8px;text-align:center;">Cloud Acronis</th>
+            <th style="padding:10px 8px;">Duración</th>
+            <th style="padding:10px 8px;">Próximo</th>
+            <th style="padding:10px 8px;">Agente</th>
+            <th style="padding:10px 8px;text-align:center;">CyberFit</th>
+            <th style="padding:10px 8px;text-align:center;">Estado</th>
+          </tr>
+        </thead>
+        <tbody>{srv_rows}</tbody>
+      </table>
+    </div>"""
+
+    # 5. Capacidad de Almacenamiento
+    storages = data.get('storages', [])
+    storage_cards = ""
+    for st in storages:
+        pct = st['usage_percent']
+        bar_color = "#ef4444" if pct >= 85 else ("#f59e0b" if pct >= 75 else "#10b981")
+        alert_badge = ""
+        if st['is_warning']:
+            alert_badge = f"""<span style="background:#ef4444;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:bold;margin-left:8px;">⚠️ RIESGO AGOTAMIENTO (&gt;{st['threshold']}%)</span>"""
+
+        storage_cards += f"""
+        <div style="background:#1e293b;border:1px solid #334155;border-radius:10px;padding:14px 18px;margin-bottom:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <div>
+              <strong style="color:#ffffff;font-size:13px;">{st['name']}</strong>
+              <span style="color:#60a5fa;font-size:11px;margin-left:8px;">({st['type_label']})</span>
+              {alert_badge}
+            </div>
+            <span style="font-size:14px;font-weight:bold;color:{bar_color};">{pct:.1f}%</span>
+          </div>
+          <div style="background:#0f172a;border-radius:6px;height:8px;overflow:hidden;margin-bottom:8px;">
+            <div style="background:{bar_color};width:{min(100.0, pct)}%;height:100%;border-radius:6px;"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:#94a3b8;">
+            <span>Total: <strong style="color:#f8fafc;">{st['total_str']}</strong></span>
+            <span>Usado: <strong style="color:#f8fafc;">{st['used_str']}</strong></span>
+            <span>Libre: <strong style="color:#f8fafc;">{st['free_str']}</strong></span>
+            <span>Medido: {st['timestamp']}</span>
+          </div>
+        </div>"""
+
+    # Ensamblado Final
+    html = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Reporte Ejecutivo de Respaldos - Backupcode</title>
+  <style>
+    {pdf_style}
+  </style>
+</head>
+<body style="margin:0;padding:0;background-color:#080e1a;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#f1f5f9;">
+  <table width="100%" cellspacing="0" cellpadding="0" style="background-color:#080e1a;padding:24px 0;">
+    <tr>
+      <td align="center">
+        <table width="780" cellspacing="0" cellpadding="0" style="max-width:780px;width:100%;background-color:#0f172a;border:1px solid #334155;border-radius:14px;overflow:hidden;box-shadow:0 10px 25px rgba(0,0,0,0.5);">
+          
+          <!-- Header con Logo Backupcode -->
+          <tr>
+            <td style="padding:24px 28px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);border-bottom:2px solid #3b82f6;">
+              <table width="100%" cellspacing="0" cellpadding="0">
+                <tr>
+                  {logo_html}
+                  <td style="vertical-align:middle;">
+                    <span style="font-size:11px;font-weight:700;color:#60a5fa;letter-spacing:1px;text-transform:uppercase;">BACKUPCODE · SOLUCIONES IT</span>
+                    <h1 style="margin:4px 0 2px 0;font-size:22px;color:#ffffff;font-weight:800;">Reporte Ejecutivo de Respaldos</h1>
+                    <p style="margin:0;font-size:12px;color:#94a3b8;">Período evaluado: <strong>{data.get('period_start')}</strong> al <strong>{data.get('period_end')}</strong></p>
+                    {scope_badge}
+                  </td>
+                  <td align="right" style="vertical-align:middle;">
+                    <span style="display:inline-block;padding:8px 14px;background:#1e293b;border:1px solid #3b82f644;border-radius:8px;font-size:11px;color:#94a3b8;">
+                      Generado: <strong style="color:#f8fafc;">{data.get('generated_at')}</strong> (Chile)
+                    </span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="padding:28px 32px;">
+
+              <!-- 1. KPIs y Rendimiento -->
+              <h2 style="margin:0 0 12px 0;font-size:14px;color:#60a5fa;text-transform:uppercase;letter-spacing:0.5px;">1. Rendimiento y Volumen General</h2>
+              {kpis_html}
+
+              <!-- 2. Resumen por Cliente / Tenant -->
+              <h2 style="margin:0 0 12px 0;font-size:14px;color:#60a5fa;text-transform:uppercase;letter-spacing:0.5px;">2. Desglose Agrupado por Cliente / Tenant</h2>
+              {tenants_html}
+
+              <!-- 3. Equipos en Riesgo o Sin Protección -->
+              <h2 style="margin:0 0 12px 0;font-size:14px;color:#60a5fa;text-transform:uppercase;letter-spacing:0.5px;">3. Diagnóstico de Riesgo y Equipos Afectados</h2>
+              {risk_cards_html}
+
+              <!-- 4. Tabla Técnica de Servidores / BBDD -->
+              <h2 style="margin:0 0 12px 0;font-size:14px;color:#60a5fa;text-transform:uppercase;letter-spacing:0.5px;">4. Detalle Técnico por Equipo Seleccionado</h2>
+              {tech_table_html}
+
+              <!-- 5. Capacidad de Almacenamiento -->
+              <h2 style="margin:0 0 12px 0;font-size:14px;color:#60a5fa;text-transform:uppercase;letter-spacing:0.5px;">5. Capacidad de Almacenamiento (Local NTFS & Cloud)</h2>
+              <div style="margin-bottom:14px;">
+                {storage_cards}
+              </div>
+
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding:18px 32px;background-color:#080e1a;border-top:1px solid #334155;font-size:11px;color:#64748b;text-align:center;">
+              Acronis VM Monitor &bull; Backupcode Soluciones IT &bull; Informe Ejecutivo Automatizado para Francisco y Pablo &bull; {data.get('generated_at')}
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"""
+    return html
+
+
+def render_report_pdf_html(data: dict) -> str:
+    """
+    Genera una plantilla HTML específicamente optimizada para exportación a PDF (A4 Landscape, tema ejecutivo claro,
+    alto contraste y legibilidad absoluta para impresión y visualizadores PDF).
+    """
+    logo_b64 = get_backupcode_logo_base64()
+    rate = data.get('success_rate', 100.0)
+    rate_col = "#16a34a" if rate >= 95 else ("#d97706" if rate >= 80 else "#dc2626")
+
+    # Scope badge
+    is_filt = data.get('is_filtered_selection')
+    scope_txt = f"Selección Personalizada ({data.get('total_machines',0)} equipos)" if is_filt else f"Todos los equipos visibles ({data.get('total_machines',0)})"
+
+    # Logo HTML en cápsula oscura de alto contraste
+    logo_html = f"""<div style="background:#090d16;padding:6px 12px;border-radius:6px;display:inline-block;">
+      <img src="{logo_b64}" width="100" style="display:block;" alt="Backupcode" />
+    </div>""" if logo_b64 else """<div style="font-size:14pt;font-weight:bold;color:#0284c7;">BACKUPCODE</div>"""
+
+    # 1. KPIs
+    kpis_html = f"""
+    <table width="100%" cellspacing="4" cellpadding="0" style="margin-bottom:12px;">
+      <tr>
+        <td width="16%">
+          <div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:6px;padding:8px 4px;text-align:center;">
+            <div style="font-size:15pt;font-weight:bold;color:#0f172a;">{data.get('total_machines',0)}</div>
+            <div style="font-size:7.5pt;font-weight:bold;color:#64748b;text-transform:uppercase;margin-top:2px;">Equipos Evaluados</div>
+          </div>
+        </td>
+        <td width="16%">
+          <div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:6px;padding:8px 4px;text-align:center;">
+            <div style="font-size:15pt;font-weight:bold;color:{rate_col};">{data.get('success_rate',100.0)}%</div>
+            <div style="font-size:7.5pt;font-weight:bold;color:#64748b;text-transform:uppercase;margin-top:2px;">Tasa de Éxito</div>
+          </div>
+        </td>
+        <td width="20%">
+          <div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:6px;padding:8px 4px;text-align:center;">
+            <div style="font-size:15pt;font-weight:bold;color:#0284c7;">{data.get('total_volume_str','0 GB')}</div>
+            <div style="font-size:7.5pt;font-weight:bold;color:#64748b;text-transform:uppercase;margin-top:2px;">Volumen Total Procesado</div>
+          </div>
+        </td>
+        <td width="16%">
+          <div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:6px;padding:8px 4px;text-align:center;">
+            <div style="font-size:15pt;font-weight:bold;color:#7c3aed;">{data.get('avg_duration_str','< 1m')}</div>
+            <div style="font-size:7.5pt;font-weight:bold;color:#64748b;text-transform:uppercase;margin-top:2px;">Duración Promedio</div>
+          </div>
+        </td>
+        <td width="16%">
+          <div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:6px;padding:8px 4px;text-align:center;">
+            <div style="font-size:15pt;font-weight:bold;color:#16a34a;">{data.get('success_count',0)}</div>
+            <div style="font-size:7.5pt;font-weight:bold;color:#64748b;text-transform:uppercase;margin-top:2px;">Respaldos Exitosos</div>
+          </div>
+        </td>
+        <td width="16%">
+          <div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:6px;padding:8px 4px;text-align:center;">
+            <div style="font-size:15pt;font-weight:bold;color:{'#dc2626' if data.get('failed_count',0) > 0 else '#64748b'};">{data.get('failed_count',0)}</div>
+            <div style="font-size:7.5pt;font-weight:bold;color:#64748b;text-transform:uppercase;margin-top:2px;">Respaldos Fallidos</div>
+          </div>
+        </td>
+      </tr>
+    </table>"""
+
+    # 2. Desglose por Cliente
+    t_rows = ""
+    for t in data.get('tenants_summary', []):
+        st = t['status']
+        badge_cls = "badge-ok" if st == 'OK' else ("badge-warn" if st == 'WARNING' else "badge-crit")
+        t_rows += f"""
+        <tr>
+          <td style="font-weight:bold;color:#0f172a;">{t['tenant_name']}</td>
+          <td style="text-align:center;">{t['total_vms']}</td>
+          <td style="text-align:center;font-weight:bold;color:{'#16a34a' if t['success_rate']>=90 else '#d97706'};">{t['success_rate']}%</td>
+          <td style="text-align:center;font-weight:bold;color:#0f172a;">{t['total_volume_str']}</td>
+          <td style="text-align:center;color:#64748b;">{t['local_storage_str']}</td>
+          <td style="text-align:center;font-weight:bold;color:#0284c7;">{t['cloud_storage_str']}</td>
+          <td style="text-align:center;color:#475569;">{t['quota_str']}</td>
+          <td style="text-align:center;"><span class="{badge_cls}">{st}</span></td>
+        </tr>"""
+
+    tenants_html = f"""
+    <table class="data-table" cellspacing="0" cellpadding="0">
+      <thead>
+        <tr>
+          <th width="24%">Cliente / Tenant</th>
+          <th width="8%" style="text-align:center;">Equipos</th>
+          <th width="10%" style="text-align:center;">Tasa Éxito</th>
+          <th width="14%" style="text-align:center;">Almacenamiento Total</th>
+          <th width="12%" style="text-align:center;">Local NTFS</th>
+          <th width="12%" style="text-align:center;">Cloud Acronis</th>
+          <th width="12%" style="text-align:center;">Cuota / Límite</th>
+          <th width="8%" style="text-align:center;">Estado</th>
+        </tr>
+      </thead>
+      <tbody>{t_rows}</tbody>
+    </table>"""
+
+    # 3. Riesgos
+    risk = data.get('risk_summary', {})
+    total_r = risk.get('total_risks', 0)
+    if total_r > 0:
+        items_html = ""
+        for it in risk.get('no_history', []):
+            items_html += f"""<li style="margin-bottom:3px;color:#991b1b;"><strong>{it['name']}</strong> ({it['tenant']}) — {it['reason']}</li>"""
+        for it in risk.get('overdue_48h', []):
+            items_html += f"""<li style="margin-bottom:3px;color:#b91c1c;"><strong>{it['name']}</strong> ({it['tenant']}) — {it['reason']}</li>"""
+        for it in risk.get('overdue_24h', []):
+            items_html += f"""<li style="margin-bottom:3px;color:#b45309;"><strong>{it['name']}</strong> ({it['tenant']}) — {it['reason']}</li>"""
+        for it in risk.get('no_plan', []):
+            items_html += f"""<li style="margin-bottom:3px;color:#475569;"><strong>{it['name']}</strong> ({it['tenant']}) — {it['reason']}</li>"""
+
+        risk_html = f"""
+        <div style="background:#fef2f2;border:1px solid #f87171;border-radius:6px;padding:8px 12px;margin-bottom:12px;">
+          <div style="font-weight:bold;color:#991b1b;font-size:8.5pt;margin-bottom:4px;">
+            ATENCIÓN: {total_r} CONDICIONES DE RIESGO DETECTADAS
+          </div>
+          <ul style="margin:0;padding-left:16px;font-size:7.5pt;">
+            {items_html}
+          </ul>
+        </div>"""
+    else:
+        risk_html = """
+        <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:7px 12px;margin-bottom:12px;color:#166534;font-size:8pt;">
+          <strong>Excelente:</strong> Todos los equipos evaluados cuentan con respaldo al día y políticas activas.
+        </div>"""
+
+    # 4. Detalle Técnico
+    srv_rows = ""
+    for srv in data.get('servers_detail', []):
+        st = srv['status']
+        badge_cls = "badge-ok" if st == 'OK' else ("badge-warn" if st == 'WARNING' else "badge-crit")
+        b_cnt = srv.get('backup_count_str', '0').replace('✅', 'OK').replace('❌', 'FAIL').replace('⚠️', 'WARN')
+
+        srv_rows += f"""
+        <tr>
+          <td style="font-weight:bold;color:#0f172a;">{srv['name']}</td>
+          <td style="color:#475569;">{srv['tenant_name']}</td>
+          <td style="color:#334155;">{srv['plan_name']}</td>
+          <td style="text-align:center;font-weight:bold;">{b_cnt}</td>
+          <td>{srv['last_backup_formatted']}</td>
+          <td style="font-weight:bold;color:{'#16a34a' if srv['age_status']=='ok' else ('#d97706' if srv['age_status']=='warn' else '#dc2626')};">{srv['age_str']}</td>
+          <td style="text-align:center;color:#64748b;">{srv['size_local_str']}</td>
+          <td style="text-align:center;font-weight:bold;color:#0284c7;">{srv['size_cloud_str']}</td>
+          <td style="color:#7c3aed;">{srv['duration_str']}</td>
+          <td style="color:#64748b;">{srv['next_backup_formatted']}</td>
+          <td style="color:#64748b;">{srv['agent_version']}</td>
+          <td style="text-align:center;font-weight:bold;">{srv['cyberfit']}</td>
+          <td style="text-align:center;"><span class="{badge_cls}">{st}</span></td>
+        </tr>"""
+
+    tech_table_html = f"""
+    <table class="data-table" cellspacing="0" cellpadding="0">
+      <thead>
+        <tr>
+          <th width="16%">Equipo / VM</th>
+          <th width="15%">Cliente</th>
+          <th width="12%">Plan</th>
+          <th width="8%" style="text-align:center;">Respaldos</th>
+          <th width="9%">Último Respaldo</th>
+          <th width="7%">Antigüedad</th>
+          <th width="7%" style="text-align:center;">Local NTFS</th>
+          <th width="8%" style="text-align:center;">Cloud Acronis</th>
+          <th width="6%">Duración</th>
+          <th width="8%">Próximo</th>
+          <th width="5%">Agente</th>
+          <th width="4%" style="text-align:center;">Score</th>
+          <th width="5%" style="text-align:center;">Estado</th>
+        </tr>
+      </thead>
+      <tbody>{srv_rows}</tbody>
+    </table>"""
+
+    # 5. Capacidad de Almacenamiento
+    storage_rows = ""
+    for st in data.get('storages', []):
+        pct = st['usage_percent']
+        bar_col = "#dc2626" if pct >= 85 else ("#d97706" if pct >= 75 else "#16a34a")
+        warn_txt = " [ALERTA AGOTAMIENTO]" if st['is_warning'] else ""
+
+        storage_rows += f"""
+        <div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:6px;padding:6px 10px;margin-bottom:6px;">
+          <table width="100%" cellspacing="0" cellpadding="0">
+            <tr>
+              <td style="font-size:8pt;font-weight:bold;color:#0f172a;">
+                {st['name']} <span style="font-weight:normal;color:#0284c7;">({st['type_label']})</span>
+                <span style="color:#dc2626;font-size:7.5pt;font-weight:bold;">{warn_txt}</span>
+              </td>
+              <td style="text-align:right;font-size:8.5pt;font-weight:bold;color:{bar_col};">
+                {pct:.1f}%
+              </td>
+            </tr>
+          </table>
+          <div style="background:#e2e8f0;height:6px;border-radius:3px;margin:3px 0;">
+            <div style="background:{bar_col};width:{min(100.0, pct):.1f}%;height:6px;border-radius:3px;"></div>
+          </div>
+          <table width="100%" cellspacing="0" cellpadding="0" style="font-size:7pt;color:#64748b;">
+            <tr>
+              <td>Total: <strong>{st['total_str']}</strong></td>
+              <td>Usado: <strong>{st['used_str']}</strong></td>
+              <td>Libre: <strong>{st['free_str']}</strong></td>
+              <td style="text-align:right;">Medido: {st['timestamp']}</td>
+            </tr>
+          </table>
+        </div>"""
+
+    html = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<style>
+  @page {{
+    size: a4 landscape;
+    margin: 8mm 10mm 10mm 10mm;
+  }}
+  body {{
+    font-family: Helvetica, Arial, sans-serif;
+    color: #0f172a;
+    background-color: #ffffff;
+    font-size: 8pt;
+    line-height: 1.3;
+  }}
+  .header-table {{
+    width: 100%;
+    border-bottom: 2.5px solid #0284c7;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+  }}
+  .section-title {{
+    font-size: 9.5pt;
+    font-weight: bold;
+    color: #0369a1;
+    margin: 12px 0 5px 0;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid #e2e8f0;
+    padding-bottom: 3px;
+  }}
+  table.data-table {{
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 10px;
+  }}
+  table.data-table th {{
+    background: #0f172a;
+    color: #ffffff;
+    font-size: 7.5pt;
+    font-weight: bold;
+    padding: 5px 6px;
+    border: 1px solid #0f172a;
+    text-align: left;
+  }}
+  table.data-table td {{
+    padding: 4px 6px;
+    border: 1px solid #cbd5e1;
+    font-size: 7.5pt;
+    color: #1e293b;
+  }}
+  table.data-table tr:nth-child(even) td {{
+    background: #f8fafc;
+  }}
+  .badge-ok {{
+    background: #dcfce7;
+    color: #166534;
+    font-weight: bold;
+    padding: 2px 5px;
+    border-radius: 3px;
+    font-size: 7pt;
+  }}
+  .badge-warn {{
+    background: #fef3c7;
+    color: #92400e;
+    font-weight: bold;
+    padding: 2px 5px;
+    border-radius: 3px;
+    font-size: 7pt;
+  }}
+  .badge-crit {{
+    background: #fee2e2;
+    color: #991b1b;
+    font-weight: bold;
+    padding: 2px 5px;
+    border-radius: 3px;
+    font-size: 7pt;
+  }}
+  tr {{
+    page-break-inside: avoid;
+  }}
+</style>
+</head>
+<body>
+  <!-- Header Corporativo -->
+  <table class="header-table" cellspacing="0" cellpadding="0">
+    <tr>
+      <td width="115" style="vertical-align:middle;">
+        {logo_html}
+      </td>
+      <td style="vertical-align:middle;padding-left:14px;">
+        <div style="font-size:8.5pt;font-weight:bold;color:#0284c7;letter-spacing:1px;text-transform:uppercase;">BACKUPCODE · SOLUCIONES IT</div>
+        <div style="font-size:16pt;font-weight:bold;color:#0f172a;margin:2px 0 0 0;">Informe Ejecutivo de Respaldos</div>
+        <div style="font-size:8.5pt;color:#64748b;">Monitoreo Acronis Cyber Protect · Estado de Protección, Capacidad y Cuotas</div>
+      </td>
+      <td style="vertical-align:middle;text-align:right;width:240px;">
+        <div style="font-size:8pt;color:#475569;line-height:1.4;">
+          <div>Período: <strong>{data.get('period_start')}</strong> al <strong>{data.get('period_end')}</strong></div>
+          <div>Alcance: <strong>{scope_txt}</strong></div>
+          <div>Generado: <strong>{data.get('generated_at')} (Chile)</strong></div>
+        </div>
+      </td>
+    </tr>
+  </table>
+
+  <!-- 1. KPIs -->
+  <div class="section-title">1. Rendimiento y Volumen General</div>
+  {kpis_html}
+
+  <!-- 2. Clientes -->
+  <div class="section-title">2. Desglose Agrupado por Cliente / Tenant</div>
+  {tenants_html}
+
+  <!-- 3. Riesgos -->
+  <div class="section-title">3. Diagnóstico de Riesgo y Equipos Afectados</div>
+  {risk_html}
+
+  <!-- 4. Detalle Técnico -->
+  <div class="section-title">4. Detalle Técnico por Equipo Seleccionado</div>
+  {tech_table_html}
+
+  <!-- 5. Almacenamiento -->
+  <div class="section-title">5. Capacidad de Almacenamiento (Local NTFS & Cloud)</div>
+  {storage_rows}
+
+  <!-- Footer -->
+  <table width="100%" cellspacing="0" cellpadding="0" style="border-top:1px solid #cbd5e1;padding-top:6px;margin-top:12px;font-size:7.5pt;color:#64748b;">
+    <tr>
+      <td>Acronis VM Monitor &bull; Backupcode Soluciones IT &bull; Documento Confidencial</td>
+      <td style="text-align:right;">Página <pdf:pageNumber /> de <pdf:pageCount /></td>
+    </tr>
+  </table>
+</body>
+</html>"""
+    return html
+
+
+def generate_report_pdf(data: dict) -> bytes:
+    """
+    Genera un archivo binario PDF a partir del informe en HTML usando xhtml2pdf
+    con diseño apaisado de alto contraste y legibilidad ejecutiva.
+    """
+    import io
+    import xhtml2pdf.pisa as pisa
+
+    html = render_report_pdf_html(data)
+    pdf_buffer = io.BytesIO()
+    status = pisa.CreatePDF(io.StringIO(html), dest=pdf_buffer, encoding='utf-8')
+    if status.err:
+        raise RuntimeError(f"Error generando PDF: código {status.err}")
+    return pdf_buffer.getvalue()
+
+
+def send_weekly_report(recipients: list = None, start_iso: str = None, end_iso: str = None, tenant_id: str = None, vm_ids: list = None) -> dict:
+    """Genera y despacha el reporte semanal por correo a los destinatarios indicados."""
+    cfg = db.get_report_config()
+    to_emails = recipients or cfg.get('emails') or TO_EMAILS
+
+    if not to_emails:
+        return {'ok': False, 'error': 'No hay correos destinatarios configurados'}
+
+    data = generate_weekly_report_data(start_iso, end_iso, tenant_id, vm_ids=vm_ids)
+    html_body = render_report_html(data)
+
+    rate = data.get('success_rate', 100.0)
+    rate_icon = "🟢" if rate >= 95 else ("🟡" if rate >= 80 else "🔴")
+    subject = f"📊 [Reporte Acronis] {rate_icon} {rate:.1f}% Éxito ({data.get('total_machines')} equipos) - {data.get('period_start')}"
+
+    email_cfg = dict(db.get_channel_config('email'))
+    email_cfg['to_emails'] = to_emails
+    email_cfg['enabled'] = True
+
+    sent = send_email(subject, html_body, force_cfg=email_cfg)
+    return {
+        'ok': sent,
+        'recipients': to_emails,
+        'subject': subject,
+        'report_data': data
+    }
+
+
+def check_scheduled_weekly_report():
+    """
+    Evalúa si corresponde enviar automáticamente el reporte semanal según la
+    configuración (ej. los días lunes a las 08:00 AM hora de Chile).
+    """
+    cfg = db.get_report_config()
+    if not cfg.get('enabled'):
+        return
+
+    now_c = now_chile()
+    day_map = {0: 'mon', 1: 'tue', 2: 'wed', 3: 'thu', 4: 'fri', 5: 'sat', 6: 'sun'}
+    current_day = day_map.get(now_c.weekday())
+    target_day = (cfg.get('day_of_week') or 'mon').lower()
+
+    current_hm = now_c.strftime('%H:%M')
+    target_hm = cfg.get('time_utc4') or '08:00'
+    today_str = now_c.strftime('%Y-%m-%d')
+
+    if current_day == target_day and current_hm >= target_hm:
+        if cfg.get('last_sent_date') != today_str:
+            target_vms = cfg.get('selected_vm_ids')
+            print(f"\n[REPORT SCHEDULER] Disparando envío automático del reporte para {cfg.get('emails')}...")
+            res = send_weekly_report(recipients=cfg.get('emails'), vm_ids=target_vms)
+            if res.get('ok'):
+                print(f"[REPORT SCHEDULER] ✅ Reporte enviado exitosamente a {res.get('recipients')}")
+                cfg['last_sent_date'] = today_str
+                db.set_report_config(cfg)
+            else:
+                print(f"[REPORT SCHEDULER] ❌ Falló el envío del reporte: {res.get('error')}")
+
+
 # ─────────────────────────── Ciclo principal ───────────────────────────────
 
 def run():
@@ -796,6 +1864,8 @@ def run():
 
     email_cfg = db.get_channel_config('email')
     email_active = bool(email_cfg.get('enabled') or (SMTP_HOST and TO_EMAILS))
+
+    rep_cfg = db.get_report_config()
 
     print(f"\n{'='*60}")
     print(f"  Acronis Notification Engine")
@@ -806,6 +1876,7 @@ def run():
     print(f"  Telegram       : {'✅ configurado' if (TELEGRAM_BOT_TOKEN or db.get_channel_config('telegram').get('enabled')) else '❌ NO configurado'}")
     print(f"  Email SMTP     : {'✅ configurado' if email_active else '❌ NO configurado'}")
     print(f"  Backup Exitoso : {'✅ activo' if NOTIFY_BACKUP_SUCCESS else '❌ desactivado'}")
+    print(f"  Reporte Semanal: {'✅ activo (' + rep_cfg.get('day_of_week', 'mon').upper() + ' ' + rep_cfg.get('time_utc4','08:00') + ')' if rep_cfg.get('enabled') else '❌ desactivado'}")
     print(f"  Alertas Acronis: {'✅' if ACRONIS_ALERTS_ON else '❌'}")
     print(f"  DRY RUN        : {'✅ activo (no envía)' if DRY_RUN else '❌'}")
     print(f"{'='*60}\n")
@@ -829,7 +1900,10 @@ def run():
                 sent_native = check_acronis_alerts(now_iso)
                 print(f"  → {sent_native} alertas nativas enviadas")
 
-            # 3. Resumen de notificaciones activas
+            # 3. Comprobar programación del Reporte Semanal
+            check_scheduled_weekly_report()
+
+            # 4. Resumen de notificaciones activas
             summary = db.get_notifications_summary()
             print(f"  [RESUMEN] Activas: {summary['active']} "
                   f"(🔴 {summary['critical']} | 🟡 {summary['warning']}) "

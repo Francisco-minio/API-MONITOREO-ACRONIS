@@ -25,6 +25,7 @@ wheels/
 *.db
 *.db-shm
 *.db-wal
+*.pdf
 monitor_status.json
 all_tenants.json
 acronis_full_inventory.json

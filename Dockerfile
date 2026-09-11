@@ -34,6 +34,7 @@ COPY notification_engine.py .
 COPY get_inventory.py  .
 COPY list_vms.py       .
 COPY index.html        .
+COPY backupcode_logo.png .
 
 # El directorio /app/data se usa como volumen compartido
 # entre el servicio monitor y el servicio api.
