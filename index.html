@@ -484,6 +484,185 @@
         .val-old { color: var(--muted); text-decoration: line-through; }
         .val-new  { color: #34d399; }
 
+        /* ── Modal Detalles de Actividad (Estilo Acronis Cyber Protect) ── */
+        #activity-modal-overlay {
+            display: none;
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,.75);
+            backdrop-filter: blur(6px);
+            z-index: 250;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        #activity-modal-overlay.open { display: flex; }
+        #activity-modal {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 16px;
+            width: 100%;
+            max-width: 680px;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.7);
+            color: #f8fafc;
+            display: flex;
+            flex-direction: column;
+        }
+        .act-modal-topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 24px;
+            border-bottom: 1px solid #1e293b;
+        }
+        .act-modal-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin: 0;
+            color: #f8fafc;
+        }
+        .act-modal-close {
+            background: none;
+            border: none;
+            color: #94a3b8;
+            font-size: 20px;
+            cursor: pointer;
+            padding: 4px;
+            transition: color .15s;
+        }
+        .act-modal-close:hover { color: #f8fafc; }
+
+        .act-summary-header {
+            display: flex;
+            align-items: flex-start;
+            gap: 14px;
+            padding: 20px 24px;
+            border-bottom: 1px solid #1e293b;
+            background: rgba(15,23,42,.6);
+        }
+        .act-status-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+        .act-status-icon.ok { background: rgba(16,185,129,.15); color: #10b981; border: 2px solid #10b981; }
+        .act-status-icon.warning { background: rgba(245,158,11,.15); color: #f59e0b; border: 2px solid #f59e0b; }
+        .act-status-icon.error { background: rgba(239,68,68,.15); color: #ef4444; border: 2px solid #ef4444; }
+
+        .act-summary-info { flex: 1; }
+        .act-summary-time { font-size: 13px; color: #94a3b8; margin-bottom: 4px; }
+        .act-summary-name { font-size: 16px; font-weight: 700; color: #f8fafc; }
+
+        .act-props-grid {
+            padding: 20px 24px;
+            display: grid;
+            grid-template-columns: 140px 1fr;
+            row-gap: 8px;
+            column-gap: 12px;
+            font-size: 13px;
+            border-bottom: 1px solid #1e293b;
+        }
+        .act-prop-lbl { color: #94a3b8; }
+        .act-prop-val { color: #f8fafc; font-weight: 500; }
+        .act-prop-val.highlight { color: #38bdf8; font-weight: 600; }
+
+        .act-metrics-cards {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            padding: 16px 24px;
+            background: #090d16;
+            border-bottom: 1px solid #1e293b;
+        }
+        .act-metric-box {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 10px;
+            text-align: center;
+        }
+        .act-metric-box .m-val { font-size: 15px; font-weight: 700; color: #38bdf8; }
+        .act-metric-box .m-lbl { font-size: 10px; color: #94a3b8; text-transform: uppercase; margin-top: 2px; }
+
+        .act-bottleneck-card {
+            margin: 18px 24px;
+            background: rgba(30,58,138,.15);
+            border: 1px solid rgba(59,130,246,.35);
+            border-radius: 10px;
+            padding: 14px 18px;
+        }
+        .act-btnk-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: #93c5fd;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 10px;
+        }
+        .act-btnk-bar {
+            height: 8px;
+            background: #1e293b;
+            border-radius: 4px;
+            overflow: hidden;
+            display: flex;
+            margin-bottom: 8px;
+        }
+        .act-btnk-seg-dest { background: #2563eb; height: 100%; }
+        .act-btnk-seg-src  { background: #93c5fd; height: 100%; }
+        .act-btnk-legend {
+            font-size: 11px;
+            color: #94a3b8;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .act-timeline-sec {
+            padding: 18px 24px 24px 24px;
+        }
+        .act-tl-item {
+            display: flex;
+            gap: 12px;
+            position: relative;
+            padding-bottom: 18px;
+        }
+        .act-tl-item:last-child { padding-bottom: 0; }
+        .act-tl-item::before {
+            content: '';
+            position: absolute;
+            left: 10px;
+            top: 22px;
+            bottom: 0;
+            width: 2px;
+            background: #334155;
+        }
+        .act-tl-item:last-child::before { display: none; }
+        .act-tl-dot {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: #10b981;
+            color: #0f172a;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            flex-shrink: 0;
+            z-index: 2;
+        }
+        .act-tl-dot.warning { background: #f59e0b; }
+        .act-tl-dot.error   { background: #ef4444; }
+        .act-tl-content { flex: 1; font-size: 12px; }
+        .act-tl-time { color: #38bdf8; font-weight: 600; margin-bottom: 2px; }
+        .act-tl-title { color: #e2e8f0; }
+
         /* ── Empty state ── */
         .empty-state {
             grid-column: 1 / -1;
@@ -1282,6 +1461,19 @@
     </div>
 </div>
 
+<!-- ═══════════════════ MODAL: DETALLES DE ACTIVIDAD (ESTILO ACRONIS) ═══════════════════ -->
+<div id="activity-modal-overlay" onclick="closeActivityModal(event)">
+    <div id="activity-modal">
+        <div class="act-modal-topbar">
+            <h3 class="act-modal-title">Detalles de actividad</h3>
+            <button class="act-modal-close" onclick="closeActivityModalBtn()" title="Cerrar"><i class="fas fa-xmark"></i></button>
+        </div>
+        <div id="activity-modal-body">
+            <!-- Dynamic content injected here -->
+        </div>
+    </div>
+</div>
+
 <!-- Toast container -->
 <div id="toast-container"></div>
 
@@ -1583,9 +1775,12 @@ function renderGrid(vms) {
                 <span class="badge badge-${sc}">${vm.protection_status || 'unknown'}</span>
             </div>
             <div class="card-metrics">
-                <div class="metric-block">
-                    <div class="metric-label">Último Backup</div>
-                    <div class="metric-value" style="font-size:11px;">${fmt(vm.last_backup_success)}</div>
+                <div class="metric-block" onclick="event.stopPropagation(); openActivityDetailsModal('', '${vm.vm_id}');" style="cursor:pointer;" title="Click para ver Detalles de Actividad de Acronis">
+                    <div class="metric-label" style="display:flex;justify-content:space-between;align-items:center;">
+                        <span>Último Backup</span>
+                        <span style="font-size:9px;color:#38bdf8;font-weight:600;"><i class="fas fa-search-plus"></i> Detalles</span>
+                    </div>
+                    <div class="metric-value" style="font-size:11px;color:#38bdf8;">${fmt(vm.last_backup_success)}</div>
                 </div>
                 <div class="metric-block">
                     <div class="metric-label">CyberFit Score</div>
@@ -1605,9 +1800,14 @@ function renderGrid(vms) {
                     <div class="metric-value" style="font-size:11px;">${vm.agent_version || 'N/A'}</div>
                 </div>
             </div>
-            <div class="card-footer">
-                <span>Próximo Backup</span>
-                <span class="next-val">${fmtShort(vm.next_backup)}</span>
+            <div class="card-footer" style="display:flex;justify-content:space-between;align-items:center;">
+                <div>
+                    <span>Próximo Backup: </span>
+                    <span class="next-val">${fmtShort(vm.next_backup)}</span>
+                </div>
+                <button class="btn-card-activity" onclick="event.stopPropagation(); openActivityDetailsModal('', '${vm.vm_id}');" title="Ver Detalles de Actividad de Acronis" style="background:rgba(56,189,248,0.12);border:1px solid rgba(56,189,248,0.3);color:#38bdf8;padding:2px 8px;border-radius:6px;font-size:10px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">
+                    <i class="fas fa-file-waveform"></i> Actividad
+                </button>
             </div>
             ${alertsHtml}
         `;
@@ -1663,6 +1863,167 @@ function closeModal(e) {
 }
 function closeModalBtn() {
     document.getElementById('modal-overlay').classList.remove('open');
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Modal: Detalles de Actividad (Acronis Console Style)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async function openActivityDetailsModal(activityId, vmId) {
+    const modal = document.getElementById('activity-modal-overlay');
+    const body = document.getElementById('activity-modal-body');
+    modal.classList.add('open');
+    body.innerHTML = `
+        <div style="text-align:center;padding:50px 20px;color:#94a3b8;">
+            <i class="fas fa-spinner fa-spin" style="font-size:24px;margin-bottom:12px;color:#38bdf8;"></i>
+            <p style="margin:0;font-size:14px;">Consultando telemetría en tiempo real desde Acronis...</p>
+        </div>`;
+
+    try {
+        let url = activityId ? `/api/activity/${encodeURIComponent(activityId)}/details` : `/api/machines/${encodeURIComponent(vmId)}/latest-activity`;
+        const r = await fetch(url);
+        const j = await r.json();
+        if (j.ok && j.data) {
+            renderActivityModal(j.data);
+        } else {
+            body.innerHTML = `
+                <div style="text-align:center;padding:40px 20px;color:#ef4444;">
+                    <i class="fas fa-triangle-exclamation" style="font-size:28px;margin-bottom:12px;"></i>
+                    <p style="font-size:14px;margin-bottom:4px;">No se encontraron detalles para esta actividad.</p>
+                    <span style="font-size:11px;color:#94a3b8;">${j.error || ''}</span>
+                </div>`;
+        }
+    } catch(err) {
+        body.innerHTML = `
+            <div style="text-align:center;padding:40px 20px;color:#ef4444;">
+                <i class="fas fa-triangle-exclamation" style="font-size:28px;margin-bottom:12px;"></i>
+                <p style="font-size:14px;">Error de conexión al obtener actividad: ${err.message}</p>
+            </div>`;
+    }
+}
+
+function renderActivityModal(data) {
+    const body = document.getElementById('activity-modal-body');
+    const isOk = data.state === 'success' || data.state_cls === 'ok';
+    const isWarn = data.state === 'warning' || data.state_cls === 'warning';
+    const iconClass = isOk ? 'ok' : (isWarn ? 'warning' : 'error');
+    const iconFa = isOk ? 'fa-check' : (isWarn ? 'fa-exclamation' : 'fa-xmark');
+
+    const btnk = data.bottleneck || {};
+    const srcPct = btnk.source || 0;
+    const dstPct = btnk.destination || 0;
+    const btnkLabel = btnk.label || 'Escribir datos en el destino';
+
+    const subtasks = data.subtasks || [];
+    const subtasksHtml = subtasks.length > 0 ? subtasks.map(s => {
+        const sOk = s.state === 'completed' || s.state === 'success';
+        return `
+            <div class="act-tl-item">
+                <div class="act-tl-dot ${sOk ? '' : 'error'}">
+                    <i class="fas ${sOk ? 'fa-check' : 'fa-xmark'}"></i>
+                </div>
+                <div class="act-tl-content">
+                    <div class="act-tl-time">${s.time_range || ''}</div>
+                    <div class="act-tl-title">${s.title || ''}</div>
+                </div>
+            </div>`;
+    }).join('') : `
+        <div style="font-size:12px;color:#94a3b8;font-style:italic;">
+            Sin sub-etapas registradas para esta tarea.
+        </div>`;
+
+    body.innerHTML = `
+        <div class="act-summary-header">
+            <div class="act-status-icon ${iconClass}">
+                <i class="fas ${iconFa}"></i>
+            </div>
+            <div class="act-summary-info">
+                <div class="act-summary-time">${data.time_span || ''}</div>
+                <div class="act-summary-name">${data.title || 'Plan de protección'}</div>
+            </div>
+        </div>
+
+        <div class="act-props-grid">
+            <div class="act-prop-lbl">Estado:</div>
+            <div class="act-prop-val" style="display:flex;align-items:center;gap:6px;">
+                <span style="color:${isOk ? '#10b981' : (isWarn ? '#f59e0b' : '#ef4444')};">●</span> ${data.state_label || 'Completada'}
+            </div>
+
+            <div class="act-prop-lbl">Cliente:</div>
+            <div class="act-prop-val">${data.tenant_name || '-'}</div>
+
+            <div class="act-prop-lbl">Dispositivo:</div>
+            <div class="act-prop-val highlight">${data.vm_name || '-'}</div>
+
+            <div class="act-prop-lbl">Plan:</div>
+            <div class="act-prop-val">${data.plan_name || '-'}</div>
+
+            <div class="act-prop-lbl">Iniciado por:</div>
+            <div class="act-prop-val">${data.initiator || 'Según la programación'}</div>
+
+            <div class="act-prop-lbl">Tipo de ejecución:</div>
+            <div class="act-prop-val">${data.run_mode_label || 'Según la programación'}</div>
+
+            <div class="act-prop-lbl">Hora de inicio:</div>
+            <div class="act-prop-val">${data.start_time_formatted || '-'}</div>
+
+            <div class="act-prop-lbl">Hora de finalización:</div>
+            <div class="act-prop-val">${data.end_time_formatted || '-'}</div>
+
+            <div class="act-prop-lbl">Duración:</div>
+            <div class="act-prop-val highlight">${data.duration_formatted || '-'}</div>
+        </div>
+
+        <div class="act-metrics-cards">
+            <div class="act-metric-box">
+                <div class="m-val">${data.bytes_processed_formatted || '0 GB'}</div>
+                <div class="m-lbl">Bytes procesados</div>
+            </div>
+            <div class="act-metric-box">
+                <div class="m-val" style="color:#10b981;">${data.bytes_saved_formatted || '0 GB'}</div>
+                <div class="m-lbl">Bytes guardados</div>
+            </div>
+            <div class="act-metric-box">
+                <div class="m-val" style="color:#a78bfa;">${data.reduction_percent || '0%'}</div>
+                <div class="m-lbl">Ahorro / Reducción</div>
+            </div>
+            <div class="act-metric-box">
+                <div class="m-val" style="color:#f59e0b;">${data.speed_formatted || '0 MB/s'}</div>
+                <div class="m-lbl">Velocidad media</div>
+            </div>
+        </div>
+
+        <div class="act-bottleneck-card">
+            <div class="act-btnk-title">
+                <i class="fas fa-circle-info"></i>
+                <span>Atasco: ${btnkLabel}</span>
+            </div>
+            <div class="act-btnk-bar">
+                <div class="act-btnk-seg-src" style="width:${srcPct}%;" title="Lectura de origen: ${srcPct}%"></div>
+                <div class="act-btnk-seg-dest" style="width:${dstPct}%;" title="Escritura en destino: ${dstPct}%"></div>
+            </div>
+            <div class="act-btnk-legend">
+                <span>Lectura origen: <strong>${srcPct}%</strong></span>
+                <span>Escritura destino: <strong>${dstPct}%</strong></span>
+            </div>
+        </div>
+
+        <div class="act-timeline-sec">
+            <div style="font-size:12px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:14px;">
+                Etapas de Ejecución
+            </div>
+            ${subtasksHtml}
+        </div>
+    `;
+}
+
+function closeActivityModal(e) {
+    if (e.target === document.getElementById('activity-modal-overlay')) {
+        document.getElementById('activity-modal-overlay').classList.remove('open');
+    }
+}
+
+function closeActivityModalBtn() {
+    document.getElementById('activity-modal-overlay').classList.remove('open');
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

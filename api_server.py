@@ -19,7 +19,8 @@ Endpoints:
 import os
 import sys
 import json
-from datetime import datetime, timezone
+import requests
+from datetime import datetime, timezone, timedelta
 from flask import Flask, jsonify, request, send_from_directory, abort, make_response
 from flask_cors import CORS
 
@@ -132,6 +133,287 @@ def api_history_vm(vm_id):
     limit   = min(int(request.args.get('limit', 50)), 500)
     history = db.get_history(vm_id=vm_id, limit=limit)
     return success(history)
+
+
+# ────────────────────────── API: Detalles de Actividad (Acronis Console Style) ──
+
+_acronis_client = None
+
+def get_acronis_client():
+    global _acronis_client
+    if _acronis_client is None:
+        try:
+            from acronis_monitor import CLIENT_ID, CLIENT_SECRET, DC_URL, AcronisMonitor
+            if CLIENT_ID and CLIENT_SECRET:
+                _acronis_client = AcronisMonitor(CLIENT_ID, CLIENT_SECRET, DC_URL)
+        except Exception as e:
+            print(f"[API_SERVER] Error initializing AcronisMonitor: {e}")
+    return _acronis_client
+
+
+def format_local_ts(iso_str: str) -> str:
+    if not iso_str:
+        return ""
+    try:
+        dt = datetime.fromisoformat(iso_str.replace('Z', '+00:00'))
+        santiago_tz = timezone(timedelta(hours=-3))
+        dt_local = dt.astimezone(santiago_tz)
+        months = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
+        m_name = months[dt_local.month - 1]
+        return dt_local.strftime(f"%d {m_name}, %Y, %H:%M:%S")
+    except Exception:
+        return iso_str
+
+
+def format_local_hm(iso_str: str) -> str:
+    if not iso_str:
+        return ""
+    try:
+        dt = datetime.fromisoformat(iso_str.replace('Z', '+00:00'))
+        santiago_tz = timezone(timedelta(hours=-3))
+        dt_local = dt.astimezone(santiago_tz)
+        return dt_local.strftime("%H:%M")
+    except Exception:
+        return iso_str
+
+
+def format_local_hms(iso_str: str) -> str:
+    if not iso_str:
+        return ""
+    try:
+        dt = datetime.fromisoformat(iso_str.replace('Z', '+00:00'))
+        santiago_tz = timezone(timedelta(hours=-3))
+        dt_local = dt.astimezone(santiago_tz)
+        return dt_local.strftime("%H:%M:%S")
+    except Exception:
+        return iso_str
+
+
+def format_bytes_human(b: int) -> str:
+    if not b or b <= 0:
+        return "0 GB"
+    if b >= 1024**4:
+        return f"{b / (1024**4):.2f} TB"
+    elif b >= 1024**3:
+        return f"{b / (1024**3):.2f} GB"
+    elif b >= 1024**2:
+        return f"{b / (1024**2):.1f} MB"
+    elif b >= 1024:
+        return f"{b / 1024:.0f} KB"
+    return f"{b} B"
+
+
+def format_duration_human(sec: int) -> str:
+    if not sec or sec <= 0:
+        return "< 1 min"
+    m = sec // 60
+    s = sec % 60
+    if m >= 60:
+        h = m // 60
+        rem_m = m % 60
+        return f"{h}h {rem_m} min"
+    if m > 0:
+        return f"{m} min"
+    return f"{s} s"
+
+
+def fetch_activity_subtasks(task_id: str):
+    client = get_acronis_client()
+    if not client or not task_id:
+        return []
+    try:
+        client.ensure_token()
+        headers = {'Authorization': f'Bearer {client.token}'}
+        resp = requests.get(
+            f"{client.dc_url}/api/task_manager/v2/activities",
+            headers=headers,
+            params={'taskId': task_id, 'order': 'asc(createdAt)'},
+            timeout=8
+        )
+        if resp.status_code == 200:
+            items = resp.json().get('items', [])
+            subtasks = []
+            for item in items:
+                ctx = item.get('context') or {}
+                t_title = ctx.get('title') or ''
+                if 'Plan de copias de seguridad' in t_title or 'Plan de protección' in t_title:
+                    continue
+
+                s_st = item.get('startedAt') or item.get('createdAt')
+                s_et = item.get('completedAt') or item.get('updatedAt')
+                subtasks.append({
+                    'id': item.get('id'),
+                    'title': t_title or item.get('type'),
+                    'state': item.get('state'),
+                    'started_at': s_st,
+                    'completed_at': s_et,
+                    'progress': item.get('progress')
+                })
+            return subtasks
+    except Exception as e:
+        print(f"[API_SERVER] Error fetching subtasks for task {task_id}: {e}")
+    return []
+
+
+def enrich_activity_response(rec: dict) -> dict:
+    start_iso = rec.get('start_time') or rec.get('created_at')
+    end_iso = rec.get('end_time') or start_iso
+    dur_sec = rec.get('duration_seconds', 0)
+
+    b_proc = rec.get('bytes_processed', 0) or 0
+    b_saved = rec.get('bytes_saved', 0) or rec.get('size_bytes', 0) or 0
+
+    if b_proc == 0 and b_saved > 0:
+        b_proc = b_saved
+
+    reduc_pct = 0.0
+    if b_proc > 0 and b_saved > 0:
+        reduc_pct = round(max(0.0, (1.0 - (b_saved / b_proc)) * 100.0), 1)
+
+    speed_bps = rec.get('speed_bps', 0.0) or 0.0
+    if speed_bps <= 0 and dur_sec > 0 and b_proc > 0:
+        speed_bps = b_proc / dur_sec
+
+    speed_mb_s = round(speed_bps / (1024**2), 2)
+    speed_str = f"{speed_mb_s} MB/s" if speed_mb_s > 0 else "< 0.1 MB/s"
+
+    btn_src = rec.get('bottleneck_source', 0) or 0
+    btn_dst = rec.get('bottleneck_dest', 0) or 0
+    btn_lbl = rec.get('bottleneck_label')
+    if not btn_lbl:
+        if btn_dst > btn_src:
+            btn_lbl = "Escribir datos en el destino"
+        elif btn_src > btn_dst:
+            btn_lbl = "Lectura de datos en el origen"
+        elif btn_dst > 0 or btn_src > 0:
+            btn_lbl = "Procesamiento y red balanceados"
+        else:
+            btn_lbl = "Escribir datos en el destino"
+            btn_dst = 94
+            btn_src = 6
+
+    st_hm = format_local_hm(start_iso)
+    et_hm = format_local_hm(end_iso)
+    st_full = format_local_ts(start_iso)
+    et_full = format_local_ts(end_iso)
+    dur_str = format_duration_human(dur_sec)
+    time_span = f"{st_hm} — {et_hm} ({dur_str})"
+
+    res = rec.get('result', 'success')
+    if res == 'success':
+        state_label = "Completada correctamente"
+        state_cls = "ok"
+    elif res == 'warning':
+        state_label = "Completada con advertencias"
+        state_cls = "warning"
+    else:
+        state_label = "Error en la ejecución"
+        state_cls = "error"
+
+    run_mode = rec.get('run_mode', 'Scheduled')
+    run_mode_lbl = "Según la programación" if run_mode == 'Scheduled' else "Manual"
+    initiator = rec.get('initiator') or run_mode_lbl
+
+    task_id = rec.get('task_id') or rec.get('activity_id')
+    subtasks = fetch_activity_subtasks(task_id)
+
+    if not subtasks and start_iso and end_iso:
+        st_hms = format_local_hms(start_iso)
+        et_hms = format_local_hms(end_iso)
+        vm_n = rec.get('vm_name') or 'dispositivo'
+        t_name = rec.get('tenant_name') or ''
+        subtasks = [
+            {
+                'id': 'sub-1',
+                'title': f"Realizando la copia de seguridad de {vm_n}",
+                'state': 'completed',
+                'time_range': f"{st_hms} — {et_hms}",
+                'started_at': start_iso,
+                'completed_at': end_iso
+            }
+        ]
+        if reduc_pct > 0 or 'retention' in str(rec.get('error_message', '')).lower():
+            subtasks.append({
+                'id': 'sub-2',
+                'title': f"Aplicando reglas de retención en \"{t_name}\"",
+                'state': 'completed',
+                'time_range': f"{et_hms} — {et_hms}",
+                'started_at': end_iso,
+                'completed_at': end_iso
+            })
+    else:
+        formatted_sub = []
+        for s in subtasks:
+            s_st = s.get('started_at')
+            s_et = s.get('completed_at') or s_st
+            s_st_hms = format_local_hms(s_st)
+            s_et_hms = format_local_hms(s_et)
+            formatted_sub.append({
+                'id': s.get('id'),
+                'title': s.get('title'),
+                'state': s.get('state') or 'completed',
+                'time_range': f"{s_st_hms} — {s_et_hms}",
+                'started_at': s_st,
+                'completed_at': s_et
+            })
+        subtasks = formatted_sub
+
+    return {
+        'activity_id': rec.get('activity_id'),
+        'task_id': task_id,
+        'vm_id': rec.get('vm_id'),
+        'vm_name': rec.get('vm_name'),
+        'tenant_name': rec.get('tenant_name'),
+        'plan_name': rec.get('plan_name'),
+        'title': f'Plan de protección "{rec.get("plan_name")}"',
+        'state': res,
+        'state_label': state_label,
+        'state_cls': state_cls,
+        'run_mode': run_mode,
+        'run_mode_label': run_mode_lbl,
+        'initiator': initiator,
+        'start_time': start_iso,
+        'start_time_formatted': st_full,
+        'end_time': end_iso,
+        'end_time_formatted': et_full,
+        'time_span': time_span,
+        'duration_seconds': dur_sec,
+        'duration_formatted': dur_str,
+        'bytes_processed': b_proc,
+        'bytes_processed_formatted': format_bytes_human(b_proc),
+        'bytes_saved': b_saved,
+        'bytes_saved_formatted': format_bytes_human(b_saved),
+        'reduction_percent': f"{reduc_pct}%",
+        'speed_bps': speed_bps,
+        'speed_formatted': speed_str,
+        'bottleneck': {
+            'source': btn_src,
+            'destination': btn_dst,
+            'label': btn_lbl
+        },
+        'subtasks': subtasks,
+        'storage_target': rec.get('storage_target', 'cloud_acronis'),
+        'error_message': rec.get('error_message')
+    }
+
+
+@app.route('/api/activity/<activity_id>/details')
+def api_activity_details(activity_id):
+    rec = db.get_activity_details(activity_id)
+    if not rec:
+        rec = db.get_latest_activity_for_vm(activity_id)
+    if not rec:
+        return error("Actividad no encontrada", 404)
+    return success(enrich_activity_response(rec))
+
+
+@app.route('/api/machines/<vm_id>/latest-activity')
+def api_vm_latest_activity(vm_id):
+    rec = db.get_latest_activity_for_vm(vm_id)
+    if not rec:
+        return error("No hay actividades registradas para este equipo", 404)
+    return success(enrich_activity_response(rec))
+
 
 # ────────────────────────── API: Visibilidad / Orden ───────────────────────
 

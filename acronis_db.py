@@ -116,6 +116,15 @@ def init_db():
                 error_message       TEXT,
                 size_bytes          INTEGER DEFAULT 0,
                 storage_target      TEXT DEFAULT 'cloud_acronis', -- local_ntfs | cloud_acronis
+                bytes_processed     INTEGER DEFAULT 0,
+                bytes_saved         INTEGER DEFAULT 0,
+                speed_bps           REAL DEFAULT 0.0,
+                bottleneck_source   INTEGER DEFAULT 0,
+                bottleneck_dest     INTEGER DEFAULT 0,
+                bottleneck_label    TEXT,
+                run_mode            TEXT DEFAULT 'Scheduled',
+                initiator           TEXT,
+                task_id             TEXT,
                 created_at          TEXT NOT NULL
             );
 
@@ -183,10 +192,22 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
-        try:
-            conn.execute("ALTER TABLE backup_executions ADD COLUMN storage_target TEXT DEFAULT 'cloud_acronis'")
-        except sqlite3.OperationalError:
-            pass
+        for col, col_type in [
+            ("storage_target", "TEXT DEFAULT 'cloud_acronis'"),
+            ("bytes_processed", "INTEGER DEFAULT 0"),
+            ("bytes_saved", "INTEGER DEFAULT 0"),
+            ("speed_bps", "REAL DEFAULT 0.0"),
+            ("bottleneck_source", "INTEGER DEFAULT 0"),
+            ("bottleneck_dest", "INTEGER DEFAULT 0"),
+            ("bottleneck_label", "TEXT"),
+            ("run_mode", "TEXT DEFAULT 'Scheduled'"),
+            ("initiator", "TEXT"),
+            ("task_id", "TEXT"),
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE backup_executions ADD COLUMN {col} {col_type}")
+            except sqlite3.OperationalError:
+                pass
 
     print(f"[DB] Base de datos inicializada en: {DB_PATH}")
 
@@ -625,16 +646,35 @@ def get_notifications_summary() -> dict:
 
 def insert_backup_execution(data: dict) -> bool:
     """
-    Inserta una ejecución de backup desde Task Manager API / Activities.
-    Deduplica por activity_id. Devuelve True si se insertó un nuevo registro.
+    Inserta o actualiza una ejecución de backup desde Task Manager API / Activities.
+    Deduplica por activity_id y actualiza métricas finales si ya existía.
     """
     with get_conn() as conn:
         cursor = conn.execute("""
-            INSERT OR IGNORE INTO backup_executions (
+            INSERT INTO backup_executions (
                 activity_id, vm_id, vm_name, tenant_id, tenant_name,
                 plan_name, start_time, end_time, duration_seconds,
-                result, error_message, size_bytes, storage_target, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                result, error_message, size_bytes, storage_target,
+                bytes_processed, bytes_saved, speed_bps,
+                bottleneck_source, bottleneck_dest, bottleneck_label,
+                run_mode, initiator, task_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(activity_id) DO UPDATE SET
+                end_time = excluded.end_time,
+                duration_seconds = excluded.duration_seconds,
+                result = excluded.result,
+                error_message = excluded.error_message,
+                size_bytes = excluded.size_bytes,
+                storage_target = excluded.storage_target,
+                bytes_processed = excluded.bytes_processed,
+                bytes_saved = excluded.bytes_saved,
+                speed_bps = excluded.speed_bps,
+                bottleneck_source = excluded.bottleneck_source,
+                bottleneck_dest = excluded.bottleneck_dest,
+                bottleneck_label = excluded.bottleneck_label,
+                run_mode = excluded.run_mode,
+                initiator = excluded.initiator,
+                task_id = excluded.task_id
         """, (
             data.get('activity_id'),
             data.get('vm_id'),
@@ -649,9 +689,50 @@ def insert_backup_execution(data: dict) -> bool:
             data.get('error_message'),
             data.get('size_bytes', 0),
             data.get('storage_target', 'cloud_acronis'),
+            data.get('bytes_processed', 0),
+            data.get('bytes_saved', 0),
+            data.get('speed_bps', 0.0),
+            data.get('bottleneck_source', 0),
+            data.get('bottleneck_dest', 0),
+            data.get('bottleneck_label'),
+            data.get('run_mode', 'Scheduled'),
+            data.get('initiator'),
+            data.get('task_id'),
             data.get('created_at', datetime.now(timezone.utc).isoformat())
         ))
         return cursor.rowcount > 0
+
+
+def get_activity_details(identifier: str) -> Optional[dict]:
+    """
+    Busca los detalles completos de una ejecución de respaldo por activity_id, id o task_id.
+    """
+    with get_conn() as conn:
+        row = conn.execute("""
+            SELECT * FROM backup_executions 
+            WHERE activity_id = ? OR task_id = ? OR id = ?
+            ORDER BY created_at DESC LIMIT 1
+        """, (identifier, identifier, identifier)).fetchone()
+        return dict(row) if row else None
+
+
+def get_latest_activity_for_vm(vm_id_or_name: str) -> Optional[dict]:
+    """
+    Obtiene la última actividad registrada para una máquina virtual (prioriza actividades reales de Acronis).
+    """
+    with get_conn() as conn:
+        row = conn.execute("""
+            SELECT * FROM backup_executions 
+            WHERE (vm_id = ? OR vm_name = ? OR vm_name LIKE ?) AND activity_id NOT LIKE 'base_%'
+            ORDER BY created_at DESC LIMIT 1
+        """, (vm_id_or_name, vm_id_or_name, f"{vm_id_or_name}%")).fetchone()
+        if not row:
+            row = conn.execute("""
+                SELECT * FROM backup_executions 
+                WHERE vm_id = ? OR vm_name = ? OR vm_name LIKE ?
+                ORDER BY created_at DESC LIMIT 1
+            """, (vm_id_or_name, vm_id_or_name, f"{vm_id_or_name}%")).fetchone()
+        return dict(row) if row else None
 
 
 def insert_storage_snapshot(data: dict) -> int:
@@ -816,11 +897,22 @@ def get_backup_metrics(start_iso: str, end_iso: str, tenant_id: str = None, vm_i
 
             # Buscar última ejecución registrada para enriquecer con duración, tamaño y destino
             latest_exec = conn.execute("""
-                SELECT duration_seconds, size_bytes, result, error_message, end_time, storage_target
+                SELECT activity_id, duration_seconds, size_bytes, result, error_message, end_time, storage_target,
+                       bytes_processed, bytes_saved, speed_bps, bottleneck_source, bottleneck_dest, bottleneck_label,
+                       run_mode, initiator, task_id
                 FROM backup_executions
-                WHERE vm_id = ? OR vm_name = ?
+                WHERE (vm_id = ? OR vm_name = ?) AND activity_id NOT LIKE 'base_%'
                 ORDER BY created_at DESC LIMIT 1
             """, (m['vm_id'], m['name'])).fetchone()
+            if not latest_exec:
+                latest_exec = conn.execute("""
+                    SELECT activity_id, duration_seconds, size_bytes, result, error_message, end_time, storage_target,
+                           bytes_processed, bytes_saved, speed_bps, bottleneck_source, bottleneck_dest, bottleneck_label,
+                           run_mode, initiator, task_id
+                    FROM backup_executions
+                    WHERE vm_id = ? OR vm_name = ?
+                    ORDER BY created_at DESC LIMIT 1
+                """, (m['vm_id'], m['name'])).fetchone()
 
             plan_str = (m.get('protection_plan') or '').lower()
             has_local_plan = any(k in plan_str for k in ('[local]', 'local', 'ntfs', 'smb', 'disco local', 'carpeta local'))
@@ -832,8 +924,18 @@ def get_backup_metrics(start_iso: str, end_iso: str, tenant_id: str = None, vm_i
 
             raw_sz = latest_exec['size_bytes'] if latest_exec and latest_exec['size_bytes'] else int((m.get('backup_size_gb') or 0) * (1024**3))
 
+            m['latest_activity_id'] = latest_exec['activity_id'] if latest_exec else None
+            m['latest_task_id'] = latest_exec['task_id'] if latest_exec else None
             m['latest_duration_seconds'] = latest_exec['duration_seconds'] if latest_exec else 0
             m['latest_size_bytes'] = raw_sz
+            m['latest_bytes_processed'] = latest_exec['bytes_processed'] if latest_exec and latest_exec['bytes_processed'] else 0
+            m['latest_bytes_saved'] = latest_exec['bytes_saved'] if latest_exec and latest_exec['bytes_saved'] else 0
+            m['latest_speed_bps'] = latest_exec['speed_bps'] if latest_exec and latest_exec['speed_bps'] else 0.0
+            m['latest_bottleneck_source'] = latest_exec['bottleneck_source'] if latest_exec and latest_exec['bottleneck_source'] else 0
+            m['latest_bottleneck_dest'] = latest_exec['bottleneck_dest'] if latest_exec and latest_exec['bottleneck_dest'] else 0
+            m['latest_bottleneck_label'] = latest_exec['bottleneck_label'] if latest_exec else None
+            m['latest_run_mode'] = latest_exec['run_mode'] if latest_exec else 'Scheduled'
+            m['latest_initiator'] = latest_exec['initiator'] if latest_exec else None
             m['latest_result'] = latest_exec['result'] if latest_exec else ('success' if m.get('protection_status') != 'critical' else 'warning')
             m['latest_error'] = latest_exec['error_message'] if latest_exec else None
 

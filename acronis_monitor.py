@@ -133,124 +133,177 @@ class AcronisMonitor:
         headers = {'Authorization': f'Bearer {self.token}'}
         inserted = 0
         try:
-            params = {
-                'limit': 200,
-                'order': 'desc(createdAt)'
-            }
-            response = requests.get(
-                f"{self.dc_url}/api/task_manager/v2/activities",
-                headers=headers,
-                params=params,
-                timeout=45
-            )
-            if response.status_code == 401:
-                self.get_token()
-                headers = {'Authorization': f'Bearer {self.token}'}
+            items = []
+            last_created = None
+            for _ in range(3):
+                params = {
+                    'limit': 1000,
+                    'order': 'desc(createdAt)'
+                }
+                if last_created:
+                    params['createdAt'] = f'lt({last_created})'
+
                 response = requests.get(
                     f"{self.dc_url}/api/task_manager/v2/activities",
                     headers=headers,
                     params=params,
                     timeout=45
                 )
-
-            if response.status_code == 200:
-                data = response.json()
-                items = data.get('items', [])
-                for item in items:
-                    pol = item.get('policy') or {}
-                    ctx = item.get('context') or {}
-                    res = item.get('resource') or {}
-                    prog = item.get('progress') or {}
-                    runtime = ctx.get('_runtime') or {}
-
-                    is_backup = (
-                        pol.get('type') == 'backup' or
-                        'BackupPlanName' in ctx or
-                        'backup' in str(ctx.get('title', '')).lower() or
-                        'backup' in str(item.get('type', '')).lower()
+                if response.status_code == 401:
+                    self.get_token()
+                    headers = {'Authorization': f'Bearer {self.token}'}
+                    response = requests.get(
+                        f"{self.dc_url}/api/task_manager/v2/activities",
+                        headers=headers,
+                        params=params,
+                        timeout=45
                     )
-                    if not is_backup:
-                        continue
 
-                    state = (item.get('state') or item.get('status') or '').lower()
-                    result_obj = item.get('result') or {}
-                    result_code = result_obj.get('code', '') if isinstance(result_obj, dict) else ''
+                if response.status_code == 200:
+                    data = response.json()
+                    page_items = data.get('items', [])
+                    if not page_items:
+                        break
+                    items.extend(page_items)
+                    last_created = page_items[-1].get('createdAt')
+                    if len(page_items) < 1000:
+                        break
+                else:
+                    break
 
-                    if state in ('failed', 'error') or result_code in ('error', 'failed'):
-                        res_val = 'failed'
-                    elif state in ('warning', 'completed_with_warnings') or result_code == 'warning':
-                        res_val = 'warning'
-                    elif state in ('completed', 'success') or result_code == 'ok':
-                        res_val = 'success'
+            for item in items:
+                pol = item.get('policy') or {}
+                ctx = item.get('context') or {}
+                res = item.get('resource') or {}
+                prog = item.get('progress') or {}
+                runtime = ctx.get('_runtime') or {}
+
+                is_backup = (
+                    pol.get('type') == 'backup' or
+                    'BackupPlanName' in ctx or
+                    'backup' in str(ctx.get('title', '')).lower() or
+                    'copia' in str(ctx.get('title', '')).lower() or
+                    'respaldo' in str(ctx.get('title', '')).lower() or
+                    'backup' in str(item.get('type', '')).lower()
+                )
+                if not is_backup:
+                    continue
+
+                state = (item.get('state') or item.get('status') or '').lower()
+                result_obj = item.get('result') or {}
+                result_code = result_obj.get('code', '') if isinstance(result_obj, dict) else ''
+
+                if state in ('failed', 'error') or result_code in ('error', 'failed'):
+                    res_val = 'failed'
+                elif state in ('warning', 'completed_with_warnings') or result_code == 'warning':
+                    res_val = 'warning'
+                elif state in ('completed', 'success') or result_code == 'ok':
+                    res_val = 'success'
+                else:
+                    res_val = 'success'
+
+                err_msg = None
+                if res_val in ('failed', 'warning'):
+                    if isinstance(result_obj, dict):
+                        err_info = result_obj.get('error', {})
+                        if isinstance(err_info, dict):
+                            err_msg = err_info.get('details', {}).get('info') or err_info.get('message')
+                        elif isinstance(err_info, str):
+                            err_msg = err_info
+                    if not err_msg:
+                        err_msg = str(result_obj.get('payload') or state)
+
+                start_t = item.get('startedAt') or item.get('createdAt') or item.get('started_at')
+                end_t = item.get('completedAt') or item.get('completed_at') or start_t
+
+                dur = 0
+                if start_t and end_t:
+                    try:
+                        t0 = datetime.fromisoformat(start_t.replace('Z', '+00:00'))
+                        t1 = datetime.fromisoformat(end_t.replace('Z', '+00:00'))
+                        dur = max(0, int((t1 - t0).total_seconds()))
+                    except Exception:
+                        dur = item.get('duration') or 0
+
+                plan_name = pol.get('name') or ctx.get('BackupPlanName')
+                if not plan_name and ctx.get('title'):
+                    t = str(ctx['title'])
+                    if '"' in t:
+                        plan_name = t.split('"')[1]
                     else:
-                        res_val = 'success'
+                        plan_name = t
+                if not plan_name:
+                    plan_name = 'Copia de seguridad'
 
-                    err_msg = None
-                    if res_val in ('failed', 'warning'):
-                        if isinstance(result_obj, dict):
-                            err_info = result_obj.get('error', {})
-                            if isinstance(err_info, dict):
-                                err_msg = err_info.get('details', {}).get('info') or err_info.get('message')
-                            elif isinstance(err_info, str):
-                                err_msg = err_info
-                        if not err_msg:
-                            err_msg = str(result_obj.get('payload') or state)
+                plan_lower = plan_name.lower()
+                if any(k in plan_lower for k in ('[local]', 'local', 'ntfs', 'smb', 'disco local', 'carpeta local')):
+                    st_target = 'local_ntfs'
+                else:
+                    st_target = 'cloud_acronis'
 
-                    start_t = item.get('startedAt') or item.get('createdAt') or item.get('started_at')
-                    end_t = item.get('completedAt') or item.get('completed_at') or start_t
+                bytes_proc = prog.get('bytesProcessed') or runtime.get('bytesProcessed') or 0
+                bytes_saved = prog.get('bytesSaved') or runtime.get('bytesSaved') or 0
+                speed_bps = prog.get('processingSpeed') or runtime.get('processingSpeed') or 0.0
 
-                    dur = 0
-                    if start_t and end_t:
-                        try:
-                            t0 = datetime.fromisoformat(start_t.replace('Z', '+00:00'))
-                            t1 = datetime.fromisoformat(end_t.replace('Z', '+00:00'))
-                            dur = max(0, int((t1 - t0).total_seconds()))
-                        except Exception:
-                            dur = item.get('duration') or 0
+                bottleneck = prog.get('bottleneck') or runtime.get('bottleneck') or {}
+                btn_source = bottleneck.get('source', 0) if isinstance(bottleneck, dict) else 0
+                btn_dest = bottleneck.get('destination', 0) if isinstance(bottleneck, dict) else 0
+                btn_label = None
+                if btn_dest > btn_source:
+                    btn_label = "Escribir datos en el destino"
+                elif btn_source > btn_dest:
+                    btn_label = "Lectura de datos en el origen"
+                elif btn_dest > 0 or btn_source > 0:
+                    btn_label = "Procesamiento y red balanceados"
 
-                    size_b = prog.get('bytesSaved') or prog.get('bytesProcessed') or runtime.get('bytesSaved') or runtime.get('bytesProcessed') or 0
+                run_mode = ctx.get('runMode') or 'Scheduled'
+                initiator = ctx.get('UserName') or ('Según la programación' if run_mode == 'Scheduled' else 'Manual')
+                task_id = str(item.get('taskId') or item.get('id') or '')
 
-                    vm_id = res.get('id') or ctx.get('resource_id') or ctx.get('id')
-                    vm_name = res.get('name') or ctx.get('MachineName') or ctx.get('resource_name')
-                    tenant = item.get('tenant') or {}
-                    tenant_id = tenant.get('id') or item.get('tenant_id') or ctx.get('tenant_id')
-                    tenant_name = tenant.get('name') or ctx.get('tenant_name')
-                    plan_lower = plan_name.lower()
-                    if any(k in plan_lower for k in ('[local]', 'local', 'ntfs', 'smb', 'disco local', 'carpeta local')):
-                        st_target = 'local_ntfs'
-                    else:
-                        st_target = 'cloud_acronis'
+                size_b = bytes_saved if bytes_saved > 0 else (bytes_proc if bytes_proc > 0 else 0)
 
-                    rec = {
-                        'activity_id': str(item.get('uuid') or item.get('id')),
-                        'vm_id': vm_id,
-                        'vm_name': vm_name,
-                        'tenant_id': tenant_id,
-                        'tenant_name': tenant_name,
-                        'plan_name': plan_name,
-                        'start_time': start_t,
-                        'end_time': end_t,
-                        'duration_seconds': int(dur),
-                        'result': res_val,
-                        'error_message': str(err_msg) if err_msg else None,
-                        'size_bytes': int(size_b),
-                        'storage_target': st_target,
-                        'created_at': end_t or datetime.now(timezone.utc).isoformat()
-                    }
-                    if db.insert_backup_execution(rec):
-                        inserted += 1
+                vm_id = res.get('id') or ctx.get('resource_id') or ctx.get('id')
+                vm_name = res.get('name') or ctx.get('MachineName') or ctx.get('resource_name')
+                tenant = item.get('tenant') or {}
+                tenant_id = tenant.get('id') or item.get('tenant_id') or ctx.get('tenant_id')
+                tenant_name = tenant.get('name') or ctx.get('tenant_name')
 
-                    # Si obtuvimos un tamaño mayor a 0, actualizar máquinas si coincide el nombre
-                    if size_b > 0 and vm_name:
-                        size_gb = round(size_b / (1024**3), 2)
-                        with db.get_conn() as conn:
-                            conn.execute(
-                                "UPDATE machines SET backup_size_gb = ? WHERE (name = ? OR name LIKE ?) AND (backup_size_gb IS NULL OR backup_size_gb = 0)",
-                                (size_gb, vm_name, f"{vm_name}%")
-                            )
+                rec = {
+                    'activity_id': str(item.get('uuid') or item.get('id')),
+                    'vm_id': vm_id,
+                    'vm_name': vm_name,
+                    'tenant_id': tenant_id,
+                    'tenant_name': tenant_name,
+                    'plan_name': plan_name,
+                    'start_time': start_t,
+                    'end_time': end_t,
+                    'duration_seconds': int(dur),
+                    'result': res_val,
+                    'error_message': str(err_msg) if err_msg else None,
+                    'size_bytes': int(size_b),
+                    'storage_target': st_target,
+                    'bytes_processed': int(bytes_proc),
+                    'bytes_saved': int(bytes_saved),
+                    'speed_bps': float(speed_bps),
+                    'bottleneck_source': int(btn_source),
+                    'bottleneck_dest': int(btn_dest),
+                    'bottleneck_label': btn_label,
+                    'run_mode': run_mode,
+                    'initiator': initiator,
+                    'task_id': task_id,
+                    'created_at': end_t or datetime.now(timezone.utc).isoformat()
+                }
+                if db.insert_backup_execution(rec):
+                    inserted += 1
 
-            elif response.status_code == 404:
-                pass
+                # Si obtuvimos un tamaño mayor a 0, actualizar máquinas si coincide el nombre
+                if size_b > 0 and vm_name:
+                    size_gb = round(size_b / (1024**3), 2)
+                    with db.get_conn() as conn:
+                        conn.execute(
+                            "UPDATE machines SET backup_size_gb = ? WHERE (name = ? OR name LIKE ?) AND (backup_size_gb IS NULL OR backup_size_gb = 0)",
+                            (size_gb, vm_name, f"{vm_name}%")
+                        )
         except Exception as e:
             print(f"  [ACTIVITIES ERROR] {e}")
 

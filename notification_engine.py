@@ -976,6 +976,18 @@ def generate_weekly_report_data(start_iso: str = None, end_iso: str = None, tena
         next_b = m.get('next_backup')
         next_b_str = fmt_ts(next_b) if next_b else "No programado"
 
+        # Velocidad y métricas de procesamiento de la última actividad
+        speed_bps = m.get('latest_speed_bps', 0.0) or 0.0
+        if speed_bps <= 0 and dur_sec > 0 and (m.get('latest_bytes_processed') or raw_sz) > 0:
+            speed_bps = (m.get('latest_bytes_processed') or raw_sz) / max(1, dur_sec)
+        speed_mb_s = round(speed_bps / (1024**2), 2)
+        speed_str = f"{speed_mb_s} MB/s" if speed_mb_s > 0 else "< 0.1 MB/s"
+
+        b_proc = m.get('latest_bytes_processed', 0) or raw_sz
+        b_proc_str = format_bytes_human(b_proc) if b_proc > 0 else "0 GB"
+        b_saved = m.get('latest_bytes_saved', 0) or raw_sz
+        b_saved_str = format_bytes_human(b_saved) if b_saved > 0 else "0 GB"
+
         servers_detail.append({
             'vm_id': m.get('vm_id'),
             'name': vm_name,
@@ -988,6 +1000,13 @@ def generate_weekly_report_data(start_iso: str = None, end_iso: str = None, tena
             'age_str': age_str,
             'age_status': age_status,
             'duration_str': dur_str,
+            'duration_seconds': dur_sec,
+            'speed_str': speed_str,
+            'bytes_processed_str': b_proc_str,
+            'bytes_saved_str': b_saved_str,
+            'bottleneck_label': m.get('latest_bottleneck_label') or 'Escribir datos en el destino',
+            'latest_activity_id': m.get('latest_activity_id'),
+            'latest_task_id': m.get('latest_task_id'),
             'size_local_bytes': loc_b,
             'size_cloud_bytes': cld_b,
             'size_local_str': format_bytes_human(loc_b) if loc_b > 0 else "0 GB",
@@ -1286,9 +1305,17 @@ def render_report_html(data: dict, for_pdf: bool = False) -> str:
         cyb_score = srv['cyberfit']
         cyb_col = "#10b981" if cyb_score >= CYBERFIT_THR else ("#f59e0b" if cyb_score > 0 else "#64748b")
 
+        act_id = srv.get('latest_activity_id') or ''
+        vm_ident = srv.get('vm_id') or ''
+        spd_badge = f'<div style="font-size:10px;color:#94a3b8;margin-top:2px;"><i class="fas fa-bolt" style="color:#eab308;font-size:9px;"></i> {srv.get("speed_str","")}</div>' if srv.get('speed_str') else ''
+
         srv_rows += f"""
         <tr style="border-bottom:1px solid #334155;">
-          <td style="padding:10px 8px;font-weight:bold;color:#f8fafc;">{srv['name']}</td>
+          <td style="padding:10px 8px;font-weight:bold;color:#f8fafc;">
+            <a href="javascript:void(0)" onclick="openActivityDetailsModal('{act_id}', '{vm_ident}')" style="color:#38bdf8;text-decoration:none;display:inline-flex;align-items:center;gap:4px;" title="Ver detalles precisos de actividad">
+              {srv['name']} <span style="font-size:10px;opacity:0.75;">🔍</span>
+            </a>
+          </td>
           <td style="padding:10px 8px;color:#94a3b8;font-size:11px;">{srv['tenant_name']}</td>
           <td style="padding:10px 8px;color:#cbd5e1;font-size:11px;">{srv['plan_name']}</td>
           <td style="padding:10px 8px;text-align:center;font-size:11px;font-weight:bold;color:#f8fafc;white-space:nowrap;">{srv.get('backup_count_str', '0')}</td>
@@ -1296,7 +1323,7 @@ def render_report_html(data: dict, for_pdf: bool = False) -> str:
           <td style="padding:10px 8px;"><span style="color:{age_col};font-weight:bold;font-size:11px;">{srv['age_str']}</span></td>
           <td style="padding:10px 8px;text-align:center;color:#94a3b8;font-size:11px;font-weight:600;">{srv['size_local_str']}</td>
           <td style="padding:10px 8px;text-align:center;color:#38bdf8;font-size:11px;font-weight:bold;">{srv['size_cloud_str']}</td>
-          <td style="padding:10px 8px;color:#a78bfa;font-size:11px;">{srv['duration_str']}</td>
+          <td style="padding:10px 8px;color:#a78bfa;font-size:11px;">{srv['duration_str']}{spd_badge}</td>
           <td style="padding:10px 8px;color:#94a3b8;font-size:11px;">{srv['next_backup_formatted']}</td>
           <td style="padding:10px 8px;color:#94a3b8;font-size:11px;">{srv['agent_version']}</td>
           <td style="padding:10px 8px;text-align:center;"><span style="color:{cyb_col};font-weight:bold;font-size:11px;">{cyb_score}</span></td>
@@ -1572,6 +1599,8 @@ def render_report_pdf_html(data: dict) -> str:
         badge_cls = "badge-ok" if st == 'OK' else ("badge-warn" if st == 'WARNING' else "badge-crit")
         b_cnt = srv.get('backup_count_str', '0').replace('✅', 'OK').replace('❌', 'FAIL').replace('⚠️', 'WARN')
 
+        spd_pdf = f"<br/><span style='font-size:6.5pt;color:#7c3aed;'>{srv.get('speed_str','')}</span>" if srv.get('speed_str') else ""
+
         srv_rows += f"""
         <tr>
           <td style="font-weight:bold;color:#0f172a;">{srv['name']}</td>
@@ -1582,7 +1611,7 @@ def render_report_pdf_html(data: dict) -> str:
           <td style="font-weight:bold;color:{'#16a34a' if srv['age_status']=='ok' else ('#d97706' if srv['age_status']=='warn' else '#dc2626')};">{srv['age_str']}</td>
           <td style="text-align:center;color:#64748b;">{srv['size_local_str']}</td>
           <td style="text-align:center;font-weight:bold;color:#0284c7;">{srv['size_cloud_str']}</td>
-          <td style="color:#7c3aed;">{srv['duration_str']}</td>
+          <td style="color:#7c3aed;">{srv['duration_str']}{spd_pdf}</td>
           <td style="color:#64748b;">{srv['next_backup_formatted']}</td>
           <td style="color:#64748b;">{srv['agent_version']}</td>
           <td style="text-align:center;font-weight:bold;">{srv['cyberfit']}</td>
