@@ -922,7 +922,10 @@ def get_backup_metrics(start_iso: str, end_iso: str, tenant_id: str = None, vm_i
             if exec_target == 'local_ntfs':
                 has_local_plan = True
 
-            raw_sz = latest_exec['size_bytes'] if latest_exec and latest_exec['size_bytes'] else int((m.get('backup_size_gb') or 0) * (1024**3))
+            if tot_b == 0 and not m.get('last_backup_success'):
+                raw_sz = 0
+            else:
+                raw_sz = latest_exec['size_bytes'] if latest_exec and latest_exec['size_bytes'] else int((m.get('backup_size_gb') or 0) * (1024**3))
 
             m['latest_activity_id'] = latest_exec['activity_id'] if latest_exec else None
             m['latest_task_id'] = latest_exec['task_id'] if latest_exec else None

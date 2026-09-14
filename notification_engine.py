@@ -951,17 +951,29 @@ def generate_weekly_report_data(start_iso: str = None, end_iso: str = None, tena
         has_local_plan = any(k in plan_str for k in ('[local]', 'local', 'ntfs', 'smb', 'disco local', 'carpeta local'))
         has_cloud_plan = any(k in plan_str for k in ('cloud', 'acronis')) or (';' in plan_str and has_local_plan) or (not has_local_plan)
 
+        # Identificar si es una carga de base de datos o sub-recurso (ej. SQL Server)
+        is_db_workload = '://' in vm_name.lower() or 'mssql' in vm_name.lower()
+
         # Si el plan explícitamente incluye respaldo local y loc_b es 0, usar el tamaño de respaldo de la máquina
         raw_sz = m.get('latest_size_bytes', 0) or int((m.get('backup_size_gb') or 0) * (1024**3))
-        if has_local_plan and loc_b == 0 and raw_sz > 0:
-            loc_b = raw_sz
-        if has_cloud_plan and cld_b == 0 and raw_sz > 0:
-            cld_b = raw_sz
+
+        # Si no tiene ejecuciones ni último backup exitoso, no tiene datos almacenados
+        if not last_succ and m.get('backup_count', 0) == 0:
+            loc_b = 0
+            cld_b = 0
+        else:
+            if has_local_plan and loc_b == 0 and raw_sz > 0:
+                loc_b = raw_sz
+            if has_cloud_plan and cld_b == 0 and raw_sz > 0:
+                cld_b = raw_sz
 
         ts_match = find_best_tenant_storage(tenant, tenant_storages)
 
-        if loc_b == 0 and cld_b == 0 and ts_match:
-            tot_vms_in_t = max(1, sum(1 for x in machines if x.get('tenant_name') == tenant))
+        # Solo prorratear almacenamiento de tenant para máquinas/servidores reales con respaldo activo,
+        # NUNCA para bases de datos individuales ni para equipos sin respaldos
+        if not is_db_workload and loc_b == 0 and cld_b == 0 and ts_match and (last_succ or m.get('backup_count', 0) > 0):
+            non_db_machines = [x for x in machines if x.get('tenant_name') == tenant and not ('://' in (x.get('name') or '').lower() or 'mssql' in (x.get('name') or '').lower())]
+            tot_vms_in_t = max(1, len(non_db_machines))
             if ts_match.get('local_bytes', 0) > 0 and ts_match.get('cloud_bytes', 0) == 0:
                 loc_b = int(ts_match['local_bytes'] / tot_vms_in_t)
             elif ts_match.get('cloud_bytes', 0) > 0 and ts_match.get('local_bytes', 0) == 0:

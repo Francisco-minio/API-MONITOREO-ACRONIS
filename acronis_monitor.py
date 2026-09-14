@@ -527,7 +527,14 @@ class AcronisMonitor:
         context    = item.get('context', {})
         aggregate  = item.get('aggregate', {})
         policies   = item.get('policies', [])
-        attributes = item.get('attributes', {})
+        # Extraer atributos anidados de context['attributes'] (formato v4 API)
+        attrs = {}
+        for sec in context.get('attributes', []):
+            if isinstance(sec, dict):
+                for kv in sec.get('kvs', []):
+                    attrs[kv.get('key')] = kv.get('value')
+        if isinstance(item.get('attributes'), dict):
+            attrs.update(item['attributes'])
 
         # Plan de backup
         backup_policy = next((p for p in policies if 'backup' in p.get('type', '')), {})
@@ -538,18 +545,43 @@ class AcronisMonitor:
         plan_name  = (raw_names[0] if isinstance(raw_names, list) and raw_names
                       else (raw_names if isinstance(raw_names, str) else "Sin Plan"))
 
+        # Determinar versión de agente
+        raw_ver = attrs.get('version') or attrs.get('agent_version')
+        agent_version = f"v{raw_ver}" if raw_ver and not str(raw_ver).startswith('v') else (raw_ver or 'Unknown')
+
+        # Determinar CyberFit Score
+        cf_raw = attrs.get('cyberfit_score_value') or attrs.get('cyberfit_score') or 0
+        try:
+            cyberfit_score = int(cf_raw)
+        except (ValueError, TypeError):
+            cyberfit_score = 0
+
+        # Determinar tamaño de respaldo / base de datos
+        backup_size_gb = 0.0
+        if attrs.get('sql_server_database_size'):
+            try:
+                # sql_server_database_size viene en bytes desde Acronis API
+                backup_size_gb = round(float(attrs['sql_server_database_size']) / (1024**3), 4)
+            except (ValueError, TypeError):
+                backup_size_gb = 0.0
+        elif attrs.get('last_backup_size_gb'):
+            try:
+                backup_size_gb = round(float(attrs['last_backup_size_gb']), 4)
+            except (ValueError, TypeError):
+                backup_size_gb = 0.0
+
         vm = {
             "vm_id":                context.get('id'),
             "name":                 context.get('name'),
             "tenant_id":            context.get('tenant_id'),
             "tenant_name":          context.get('tenant_name') or f"Cliente {context.get('tenant_id')}",
-            "agent_version":        attributes.get('agent_version', 'Unknown'),
+            "agent_version":        agent_version,
             "protection_plan":      plan_name,
             "protection_status":    aggregate.get('status', 'unknown'),
-            "cyberfit_score":       attributes.get('cyberfit_score', 0) or 0,
+            "cyberfit_score":       cyberfit_score,
             "last_backup_success":  backup_policy.get('last_success_run'),
             "next_backup":          backup_policy.get('next_run'),
-            "backup_size_gb":       attributes.get('last_backup_size_gb', 0) or 0,
+            "backup_size_gb":       backup_size_gb,
             "last_antimalware_scan": am_policy.get('last_success_run'),
             "next_antimalware_scan": am_policy.get('next_run'),
         }
