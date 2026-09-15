@@ -487,14 +487,15 @@ _CHANNEL_DEFAULTS = {
         'chat_ids':  [],    # lista de strings
     },
     'email': {
-        'enabled':     False,
-        'smtp_host':   '',
-        'smtp_port':   587,
-        'smtp_user':   '',
-        'smtp_pass':   '',   # se omite al devolver al frontend
-        'from_email':  '',
-        'to_emails':   [],   # lista de strings
-        'use_tls':     True,
+        'enabled':        False,  # Alertas de monitoreo habilitadas
+        'alerts_enabled': False,
+        'smtp_host':      '',
+        'smtp_port':      587,
+        'smtp_user':      '',
+        'smtp_pass':      '',   # se omite al devolver al frontend
+        'from_email':     '',
+        'to_emails':      [],   # lista de strings para alertas
+        'use_tls':        True,
     }
 }
 
@@ -507,9 +508,17 @@ def get_channel_config(channel: str) -> dict:
     return default
 
 def set_channel_config(channel: str, data: dict):
-    """Guarda la config de un canal. Hace merge con los defaults."""
+    """Guarda la config de un canal. Hace merge con los defaults y protege credenciales."""
     current = get_channel_config(channel)
-    current.update(data)
+    to_save = dict(data)
+    if channel == 'email':
+        if to_save.get('smtp_pass') in ('●●●●●●', '', None) and current.get('smtp_pass'):
+            to_save['smtp_pass'] = current['smtp_pass']
+        if 'enabled' in to_save and 'alerts_enabled' not in to_save:
+            to_save['alerts_enabled'] = to_save['enabled']
+        elif 'alerts_enabled' in to_save and 'enabled' not in to_save:
+            to_save['enabled'] = to_save['alerts_enabled']
+    current.update(to_save)
     set_config(f'channel_{channel}', current)
 
 def get_channel_config_safe(channel: str) -> dict:
@@ -518,6 +527,52 @@ def get_channel_config_safe(channel: str) -> dict:
     if 'smtp_pass' in cfg:
         cfg['smtp_pass'] = '●●●●●●' if cfg['smtp_pass'] else ''
     return cfg
+
+def get_smtp_config() -> dict:
+    """Retorna la configuración de transporte del servidor SMTP."""
+    cfg = get_channel_config('email')
+    return {
+        'smtp_host':  cfg.get('smtp_host', ''),
+        'smtp_port':  int(cfg.get('smtp_port') or 587),
+        'smtp_user':  cfg.get('smtp_user', ''),
+        'smtp_pass':  cfg.get('smtp_pass', ''),
+        'from_email': cfg.get('from_email', ''),
+        'use_tls':    cfg.get('use_tls', True) if cfg.get('use_tls') is not None else True,
+        'configured': bool(cfg.get('smtp_host'))
+    }
+
+def get_smtp_config_safe() -> dict:
+    """Retorna la configuración del servidor SMTP ocultando la contraseña."""
+    c = get_smtp_config()
+    c['smtp_pass'] = '●●●●●●' if c.get('smtp_pass') else ''
+    return c
+
+def set_smtp_config(data: dict) -> dict:
+    """Actualiza la configuración del servidor SMTP respetando contraseñas previas."""
+    set_channel_config('email', data)
+    return get_smtp_config_safe()
+
+def get_alert_email_config() -> dict:
+    """Retorna la configuración del módulo de alertas de monitoreo por correo."""
+    cfg = get_channel_config('email')
+    en = cfg.get('alerts_enabled')
+    if en is None:
+        en = cfg.get('enabled', False)
+    return {
+        'enabled': bool(en),
+        'to_emails': cfg.get('to_emails', [])
+    }
+
+def set_alert_email_config(data: dict) -> dict:
+    """Actualiza la activación y destinatarios de alertas de monitoreo por correo."""
+    current = get_channel_config('email')
+    if 'enabled' in data:
+        current['enabled'] = bool(data['enabled'])
+        current['alerts_enabled'] = bool(data['enabled'])
+    if 'to_emails' in data:
+        current['to_emails'] = data['to_emails']
+    set_channel_config('email', current)
+    return get_alert_email_config()
 
 # ─────────────────────── Notificaciones (anti-spam) ───────────────────────
 

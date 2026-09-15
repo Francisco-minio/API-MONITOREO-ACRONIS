@@ -506,11 +506,77 @@ def api_acknowledge(notif_id):
 
 @app.route('/api/channels', methods=['GET'])
 def api_channels_all():
-    """Devuelve config (sin contraseñas) de todos los canales."""
+    """Devuelve config (sin contraseñas) de todos los canales y del servidor SMTP."""
     return success({
         'telegram': db.get_channel_config_safe('telegram'),
         'email':    db.get_channel_config_safe('email'),
+        'smtp':     db.get_smtp_config_safe(),
+        'alerts':   db.get_alert_email_config()
     })
+
+# ── Servidor SMTP Central ──────────────────────────────────────────────────
+
+@app.route('/api/channels/smtp', methods=['GET'])
+def api_smtp_get():
+    """Obtiene la configuración de transporte del servidor SMTP (contraseña enmascarada)."""
+    return success(db.get_smtp_config_safe())
+
+@app.route('/api/channels/smtp', methods=['POST'])
+def api_smtp_set():
+    """Guarda la configuración del servidor SMTP central."""
+    body = request.get_json(silent=True) or {}
+    if body.get('smtp_pass', '').startswith('●'):
+        body.pop('smtp_pass', None)
+    cfg = db.set_smtp_config(body)
+    return success(cfg)
+
+@app.route('/api/channels/smtp/test', methods=['POST'])
+def api_smtp_test():
+    """Prueba la conexión técnica con el servidor SMTP enviando un correo de diagnóstico."""
+    import notification_engine as notif
+    body = request.get_json(silent=True) or {}
+    target_email = body.get('email') or body.get('test_email')
+    if not target_email:
+        # Fallback al usuario o remitente configurado
+        smtp_cfg = db.get_smtp_config()
+        target_email = smtp_cfg.get('from_email') or smtp_cfg.get('smtp_user')
+
+    if not target_email:
+        return error('Debe especificar un correo electrónico de destino para la prueba.')
+
+    res = notif.test_smtp_connection(target_email)
+    if res.get('ok'):
+        return success(res)
+    return error(res.get('error', 'Fallo en la prueba de conexión SMTP'), 400)
+
+# ── Módulo de Alertas de Monitoreo por Correo ──────────────────────────────
+
+@app.route('/api/channels/email/alerts', methods=['GET'])
+def api_email_alerts_get():
+    """Obtiene la configuración del módulo de alertas por correo."""
+    return success(db.get_alert_email_config())
+
+@app.route('/api/channels/email/alerts', methods=['POST'])
+def api_email_alerts_set():
+    """Guarda activación y destinatarios de alertas de monitoreo."""
+    body = request.get_json(silent=True) or {}
+    if isinstance(body.get('to_emails'), str):
+        body['to_emails'] = [x.strip() for x in body['to_emails'].split(',') if x.strip()]
+    cfg = db.set_alert_email_config(body)
+    return success(cfg)
+
+@app.route('/api/channels/email/alerts/test', methods=['POST'])
+def api_email_alerts_test():
+    """Envía una alerta de monitoreo simulada para verificar el canal de alertas."""
+    import notification_engine as notif
+    body = request.get_json(silent=True) or {}
+    target_email = body.get('email')
+    res = notif.send_test_alert_email(target_email)
+    if res.get('ok'):
+        return success(res)
+    return error(res.get('error', 'Fallo al enviar alerta de prueba'), 400)
+
+# ── Compatibilidad con API genérica de canales ─────────────────────────────
 
 @app.route('/api/channels/<channel>', methods=['GET'])
 def api_channel_get(channel):
@@ -520,18 +586,15 @@ def api_channel_get(channel):
 
 @app.route('/api/channels/<channel>', methods=['POST'])
 def api_channel_set(channel):
-    """Guarda config del canal. La contraseña solo se actualiza si se envía
-    un valor real (no el placeholder ●●●●●●)."""
+    """Guarda config del canal."""
     if channel not in ('telegram', 'email'):
         return error('Canal inválido. Usa: telegram | email')
 
     body = request.get_json(silent=True) or {}
 
-    # Si el frontend no cambió la contraseña, no sobreescribir
     if channel == 'email' and body.get('smtp_pass', '').startswith('●'):
         body.pop('smtp_pass', None)
 
-    # chat_ids y to_emails pueden venir como string separado por comas
     if channel == 'telegram' and isinstance(body.get('chat_ids'), str):
         body['chat_ids'] = [x.strip() for x in body['chat_ids'].split(',') if x.strip()]
     if channel == 'email' and isinstance(body.get('to_emails'), str):
@@ -547,13 +610,18 @@ def api_channel_test(channel):
         return error('Canal inválido')
 
     cfg = db.get_channel_config(channel)
-    if not cfg.get('enabled'):
-        return error(f'Canal {channel} no está habilitado')
-
     if channel == 'telegram':
+        if not cfg.get('enabled'):
+            return error('Canal Telegram no está habilitado')
         return _test_telegram(cfg)
     else:
-        return _test_email(cfg)
+        import notification_engine as notif
+        body = request.get_json(silent=True) or {}
+        target = body.get('email')
+        res = notif.send_test_alert_email(target)
+        if res.get('ok'):
+            return success(res)
+        return error(res.get('error', 'Fallo al enviar prueba de email'))
 
 def _test_telegram(cfg: dict):
     import requests as req
@@ -589,50 +657,6 @@ def _test_telegram(cfg: dict):
     if ok_list:
         return success({'sent_to': ok_list, 'failed': fail_list})
     return error(f"Falló para todos los chats: {fail_list}")
-
-def _test_email(cfg: dict):
-    import smtplib
-    from email.mime.text import MIMEText
-    from email.mime.multipart import MIMEMultipart
-
-    host       = cfg.get('smtp_host','')
-    port       = int(cfg.get('smtp_port', 587))
-    user       = cfg.get('smtp_user','')
-    pwd        = cfg.get('smtp_pass','')
-    from_addr  = cfg.get('from_email','') or user
-    to_addrs   = cfg.get('to_emails', [])
-    use_tls    = cfg.get('use_tls', True)
-
-    if not host:
-        return error('SMTP host no configurado')
-    if not to_addrs:
-        return error('No hay destinatarios configurados')
-
-    try:
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = '✅ Acronis VM Monitor – Mensaje de prueba'
-        msg['From']    = from_addr
-        msg['To']      = ', '.join(to_addrs)
-        html = """
-        <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;
-                    background:#0f172a;color:#f1f5f9;padding:24px;border-radius:12px;">
-          <h2 style="color:#60a5fa">✅ Acronis VM Monitor</h2>
-          <hr style="border-color:#1e293b">
-          <p>Mensaje de prueba enviado correctamente.</p>
-          <p style="color:#64748b">Canal Email SMTP configurado y activo. 🎉</p>
-        </div>"""
-        msg.attach(MIMEText(html, 'html'))
-
-        with smtplib.SMTP(host, port, timeout=15) as srv:
-            if use_tls:
-                srv.starttls()
-            if user and pwd:
-                srv.login(user, pwd)
-            srv.sendmail(from_addr, to_addrs, msg.as_string())
-
-        return success({'sent_to': to_addrs})
-    except Exception as e:
-        return error(f'Error SMTP: {str(e)}')
 
 
 # ────────────────────────── API: Reportes Ejecutivos ───────────────────────

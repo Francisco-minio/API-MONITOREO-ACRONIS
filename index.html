@@ -172,6 +172,9 @@
             display: flex;
             flex-direction: column;
             min-height: 100vh;
+            min-width: 0;
+            max-width: calc(100vw - var(--sidebar-w));
+            overflow-x: hidden;
         }
 
         /* Top bar */
@@ -260,7 +263,7 @@
         }
 
         /* ── VM Grid ── */
-        #content { padding: 24px 28px; flex: 1; }
+        #content { padding: 24px 28px; flex: 1; min-width: 0; max-width: 100%; }
 
         #vm-grid {
             display: grid;
@@ -1037,132 +1040,173 @@
         </div>
 
         <!-- === Notificaciones view === -->
+        <!-- === Notificaciones view === -->
         <div id="view-notifications" style="display:none;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;flex-wrap:wrap;gap:12px;">
-                <h2 style="font-size:18px;font-weight:700;">Canales de Notificación</h2>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
+                <div>
+                    <h2 style="font-size:18px;font-weight:700;">Canales de Notificación y Envío de Correo</h2>
+                    <p style="font-size:12px;color:var(--muted);margin-top:2px;">
+                        Configura la infraestructura de correo SMTP central y gestiona de forma independiente las alertas de monitoreo y canales de mensajería.
+                    </p>
+                </div>
                 <div id="notif-summary-pills" style="display:flex;gap:8px;"></div>
             </div>
 
-            <!-- ── Telegram ─────────────────────────────────────── -->
-            <div class="channel-card" id="card-telegram">
+            <!-- ── SECCIÓN 1: Servidor de Correo Saliente (SMTP Central) ── -->
+            <div class="channel-card" id="card-smtp" style="border-color:rgba(59,130,246,0.35);margin-bottom:24px;">
                 <div class="channel-header">
                     <div class="channel-title">
-                        <div class="channel-icon tg"><i class="fab fa-telegram"></i></div>
+                        <div class="channel-icon em" style="background:rgba(59,130,246,0.15);color:var(--accent);"><i class="fas fa-server"></i></div>
                         <div>
-                            <div style="font-size:15px;font-weight:700;">Telegram</div>
-                            <div style="font-size:11px;color:var(--muted);">Bot API</div>
+                            <div style="font-size:15px;font-weight:700;">Servidor de Correo Saliente (SMTP Central)</div>
+                            <div style="font-size:11px;color:var(--muted);">Infraestructura compartida para Alertas, Reportes Ejecutivos y futuros módulos</div>
                         </div>
                     </div>
                     <div class="channel-status">
-                        <span id="tg-status-pill" class="status-pill sp-off">Desactivado</span>
-                        <label class="toggle-sw" style="width:40px;height:22px;">
-                            <input type="checkbox" id="tg-enabled" onchange="onTgToggle()">
-                            <span class="toggle-slider"></span>
-                        </label>
-                    </div>
-                </div>
-
-                <div class="form-row">
-                    <div class="form-group" style="grid-column:1/-1;">
-                        <label class="form-label">Bot Token</label>
-                        <input id="tg-token" type="password" class="form-input"
-                               placeholder="1234567890:AAH...tu_token_de_BotFather" autocomplete="off">
-                        <span class="form-hint">Créalo con <b>@BotFather</b> en Telegram → /newbot</span>
-                    </div>
-                </div>
-                <div class="form-row full">
-                    <div class="form-group">
-                        <label class="form-label">Chat IDs destinatarios</label>
-                        <input id="tg-chatids" type="text" class="form-input"
-                               placeholder="-1001234567890, -987654321">
-                        <span class="form-hint">IDs separados por coma. Pueden ser chats, grupos o canales.</span>
-                    </div>
-                </div>
-
-                <div class="channel-actions">
-                    <button class="btn btn-primary" onclick="saveTelegram()">
-                        <i class="fas fa-save"></i> Guardar
-                    </button>
-                    <button class="btn btn-success" id="tg-test-btn" onclick="testChannel('telegram')">
-                        <i class="fas fa-paper-plane"></i> Enviar prueba
-                    </button>
-                </div>
-            </div>
-
-            <!-- ── Email SMTP ────────────────────────────────────── -->
-            <div class="channel-card" id="card-email">
-                <div class="channel-header">
-                    <div class="channel-title">
-                        <div class="channel-icon em"><i class="fas fa-envelope"></i></div>
-                        <div>
-                            <div style="font-size:15px;font-weight:700;">Email SMTP</div>
-                            <div style="font-size:11px;color:var(--muted);">Gmail, Outlook, servidor propio...</div>
-                        </div>
-                    </div>
-                    <div class="channel-status">
-                        <span id="em-status-pill" class="status-pill sp-off">Desactivado</span>
-                        <label class="toggle-sw" style="width:40px;height:22px;">
-                            <input type="checkbox" id="em-enabled" onchange="onEmToggle()">
-                            <span class="toggle-slider"></span>
-                        </label>
+                        <span id="smtp-status-pill" class="status-pill sp-off">Sin Configurar</span>
                     </div>
                 </div>
 
                 <div class="form-row">
                     <div class="form-group">
-                        <label class="form-label">Servidor SMTP</label>
-                        <input id="em-host" type="text" class="form-input"
-                               placeholder="smtp.gmail.com">
+                        <label class="form-label">Servidor SMTP (Host)</label>
+                        <input id="smtp-host" type="text" class="form-input" placeholder="smtp.gmail.com o mail.tuempresa.cl">
                     </div>
                     <div class="form-group">
                         <label class="form-label">Puerto</label>
-                        <input id="em-port" type="number" class="form-input"
-                               placeholder="587" value="587">
+                        <input id="smtp-port" type="number" class="form-input" placeholder="587" value="587">
                     </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label class="form-label">Usuario</label>
-                        <input id="em-user" type="text" class="form-input"
-                               placeholder="usuario@empresa.com" autocomplete="off">
+                        <label class="form-label">Usuario SMTP / Cuenta</label>
+                        <input id="smtp-user" type="text" class="form-input" placeholder="usuario@empresa.com" autocomplete="off">
                     </div>
                     <div class="form-group">
-                        <label class="form-label">Contraseña / App password</label>
-                        <input id="em-pass" type="password" class="form-input"
-                               placeholder="Tu contraseña o app password" autocomplete="new-password">
+                        <label class="form-label">Contraseña / App Password</label>
+                        <input id="smtp-pass" type="password" class="form-input" placeholder="Tu contraseña o app password" autocomplete="new-password">
                     </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
                         <label class="form-label">Remitente (From)</label>
-                        <input id="em-from" type="email" class="form-input"
-                               placeholder="Acronis Monitor <monitor@empresa.com>">
+                        <input id="smtp-from" type="email" class="form-input" placeholder="Acronis Monitor <monitor@empresa.com>">
                     </div>
                     <div class="form-group">
-                        <label class="form-label">TLS</label>
-                        <select id="em-tls" class="form-input">
-                            <option value="true" selected>STARTTLS (recomendado)</option>
-                            <option value="false">Sin TLS</option>
+                        <label class="form-label">Seguridad de Conexión</label>
+                        <select id="smtp-tls" class="form-input">
+                            <option value="true" selected>STARTTLS (Recomendado - Puerto 587)</option>
+                            <option value="ssl">SSL Directo (Puerto 465)</option>
+                            <option value="false">Sin TLS (Puerto 25)</option>
                         </select>
                     </div>
                 </div>
-                <div class="form-row full">
-                    <div class="form-group">
-                        <label class="form-label">Destinatarios (To)</label>
-                        <input id="em-to" type="text" class="form-input"
-                               placeholder="admin@empresa.com, jefe@empresa.com">
-                        <span class="form-hint">Emails separados por coma.</span>
+
+                <div class="channel-actions" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;padding-top:14px;border-top:1px solid var(--border);">
+                    <button class="btn btn-primary" onclick="saveSmtpServer()">
+                        <i class="fas fa-save"></i> Guardar Servidor SMTP
+                    </button>
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                        <input id="smtp-test-recipient" type="email" class="form-input" placeholder="correo.destino@empresa.com" style="width:230px;font-size:12px;padding:6px 10px;">
+                        <button class="btn btn-ghost" id="smtp-test-btn" onclick="testSmtpConnection()">
+                            <i class="fas fa-plug-circle-check"></i> Probar Conexión SMTP
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── SECCIÓN 2: Módulos de Envíos Independientes ── -->
+            <div style="margin-bottom:14px;">
+                <h3 style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:2px;">
+                    <i class="fas fa-sliders" style="color:var(--accent);margin-right:8px;"></i>Módulos de Envío y Canales de Notificación
+                </h3>
+                <p style="font-size:11px;color:var(--muted);margin:0 0 14px 0;">
+                    Activa, desactiva y prueba de forma 100% independiente cada tipo de notificación.
+                </p>
+            </div>
+
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(360px, 1fr));gap:16px;margin-bottom:24px;">
+
+                <!-- Módulo A: Alertas de Monitoreo por Correo -->
+                <div class="channel-card" id="card-alert-email" style="margin-bottom:0;">
+                    <div class="channel-header">
+                        <div class="channel-title">
+                            <div class="channel-icon em"><i class="fas fa-envelope-open-text"></i></div>
+                            <div>
+                                <div style="font-size:15px;font-weight:700;">Alertas de Monitoreo (Email)</div>
+                                <div style="font-size:11px;color:var(--muted);">Avisos inmediatos de respaldos fallidos / críticos</div>
+                            </div>
+                        </div>
+                        <div class="channel-status">
+                            <span id="alerts-em-status-pill" class="status-pill sp-off">Desactivado</span>
+                            <label class="toggle-sw" style="width:40px;height:22px;">
+                                <input type="checkbox" id="alerts-em-enabled" onchange="onAlertsEmToggle()">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="form-row full" style="margin-top:10px;">
+                        <div class="form-group">
+                            <label class="form-label">Destinatarios de Alertas (NOC / Admins)</label>
+                            <input id="alerts-em-to" type="text" class="form-input" placeholder="noc@empresa.com, admin@empresa.com">
+                            <span class="form-hint">Correos separados por coma que recibirán las alertas cuando un respaldo falle.</span>
+                        </div>
+                    </div>
+
+                    <div class="channel-actions">
+                        <button class="btn btn-primary" onclick="saveAlertEmail()">
+                            <i class="fas fa-save"></i> Guardar Alertas
+                        </button>
+                        <button class="btn btn-ghost" id="alerts-em-test-btn" onclick="testAlertEmail()">
+                            <i class="fas fa-paper-plane"></i> Enviar Alerta de Prueba
+                        </button>
                     </div>
                 </div>
 
-                <div class="channel-actions">
-                    <button class="btn btn-primary" onclick="saveEmail()">
-                        <i class="fas fa-save"></i> Guardar
-                    </button>
-                    <button class="btn btn-success" id="em-test-btn" onclick="testChannel('email')">
-                        <i class="fas fa-envelope-circle-check"></i> Enviar prueba
-                    </button>
+                <!-- Módulo B: Telegram -->
+                <div class="channel-card" id="card-telegram" style="margin-bottom:0;">
+                    <div class="channel-header">
+                        <div class="channel-title">
+                            <div class="channel-icon tg"><i class="fab fa-telegram"></i></div>
+                            <div>
+                                <div style="font-size:15px;font-weight:700;">Alertas por Telegram</div>
+                                <div style="font-size:11px;color:var(--muted);">Bot de mensajería instantánea</div>
+                            </div>
+                        </div>
+                        <div class="channel-status">
+                            <span id="tg-status-pill" class="status-pill sp-off">Desactivado</span>
+                            <label class="toggle-sw" style="width:40px;height:22px;">
+                                <input type="checkbox" id="tg-enabled" onchange="onTgToggle()">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="form-row" style="margin-top:10px;">
+                        <div class="form-group" style="grid-column:1/-1;">
+                            <label class="form-label">Bot Token</label>
+                            <input id="tg-token" type="password" class="form-input" placeholder="1234567890:AAH...de @BotFather" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="form-row full">
+                        <div class="form-group">
+                            <label class="form-label">Chat IDs destinatarios</label>
+                            <input id="tg-chatids" type="text" class="form-input" placeholder="-1001234567890, -987654321">
+                            <span class="form-hint">IDs separados por coma.</span>
+                        </div>
+                    </div>
+
+                    <div class="channel-actions">
+                        <button class="btn btn-primary" onclick="saveTelegram()">
+                            <i class="fas fa-save"></i> Guardar Telegram
+                        </button>
+                        <button class="btn btn-ghost" id="tg-test-btn" onclick="testChannel('telegram')">
+                            <i class="fas fa-paper-plane"></i> Enviar prueba
+                        </button>
+                    </div>
                 </div>
+
             </div>
 
             <!-- ── Alertas Activas ────────────────────────────────── -->
@@ -1436,7 +1480,7 @@
             </div>
 
             <!-- Contenedor del Reporte (Previsualización HTML Viva) -->
-            <div id="report-view-container" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;min-height:300px;">
+            <div id="report-view-container" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;min-height:300px;overflow-x:auto;max-width:100%;">
                 <div style="text-align:center;padding:50px 20px;color:var(--muted);">
                     <i class="fas fa-spinner fa-spin" style="font-size:24px;margin-bottom:12px;"></i>
                     <p>Cargando reporte ejecutivo...</p>
@@ -2387,24 +2431,36 @@ async function loadNotifView() {
     try {
         const r = await fetch('/api/channels');
         const j = await r.json();
-        const { telegram, email } = j.data || {};
+        const { telegram, email, smtp, alerts } = j.data || {};
 
+        // 1. Telegram
         if (telegram) {
             document.getElementById('tg-enabled').checked = !!telegram.enabled;
             document.getElementById('tg-token').value     = telegram.bot_token || '';
             document.getElementById('tg-chatids').value   = (telegram.chat_ids || []).join(', ');
             updateTgPill(!!telegram.enabled);
         }
-        if (email) {
-            document.getElementById('em-enabled').checked = !!email.enabled;
-            document.getElementById('em-host').value  = email.smtp_host || '';
-            document.getElementById('em-port').value  = email.smtp_port || 587;
-            document.getElementById('em-user').value  = email.smtp_user || '';
-            document.getElementById('em-pass').value  = email.smtp_pass || '';
-            document.getElementById('em-from').value  = email.from_email || '';
-            document.getElementById('em-to').value    = (email.to_emails || []).join(', ');
-            document.getElementById('em-tls').value   = email.use_tls ? 'true' : 'false';
-            updateEmPill(!!email.enabled);
+
+        // 2. Servidor SMTP Central
+        const s = smtp || email || {};
+        const hostEl = document.getElementById('smtp-host');
+        if (hostEl) {
+            hostEl.value = s.smtp_host || '';
+            document.getElementById('smtp-port').value = s.smtp_port || 587;
+            document.getElementById('smtp-user').value = s.smtp_user || '';
+            document.getElementById('smtp-pass').value = s.smtp_pass || '';
+            document.getElementById('smtp-from').value = s.from_email || '';
+            document.getElementById('smtp-tls').value  = s.use_tls ? 'true' : (s.smtp_port == 465 ? 'ssl' : 'false');
+            updateSmtpPill(!!s.smtp_host);
+        }
+
+        // 3. Alertas de Monitoreo por Correo
+        const a = alerts || { enabled: email?.enabled, to_emails: email?.to_emails };
+        const aEnEl = document.getElementById('alerts-em-enabled');
+        if (aEnEl) {
+            aEnEl.checked = !!a.enabled;
+            document.getElementById('alerts-em-to').value = (a.to_emails || []).join(', ');
+            updateAlertsEmPill(!!a.enabled);
         }
     } catch(e) { console.error(e); }
 
@@ -2539,43 +2595,153 @@ async function saveTelegram() {
     } catch(e) { toast('Error de red', 'fa-circle-xmark', '#ef4444'); }
 }
 
-// ─── Email ────────────────────────────────────────────────────────
-function onEmToggle() {
-    updateEmPill(document.getElementById('em-enabled').checked);
-}
-function updateEmPill(on) {
-    const pill = document.getElementById('em-status-pill');
-    pill.textContent = on ? 'Activo' : 'Desactivado';
-    pill.className = `status-pill ${on ? 'sp-on' : 'sp-off'}`;
+// ─── Servidor SMTP Central ────────────────────────────────────────
+function updateSmtpPill(configured) {
+    const pill = document.getElementById('smtp-status-pill');
+    if (!pill) return;
+    pill.textContent = configured ? 'Configurado' : 'Sin Configurar';
+    pill.className = `status-pill ${configured ? 'sp-on' : 'sp-off'}`;
 }
 
-async function saveEmail() {
+async function saveSmtpServer() {
     const payload = {
-        enabled:    document.getElementById('em-enabled').checked,
-        smtp_host:  document.getElementById('em-host').value.trim(),
-        smtp_port:  parseInt(document.getElementById('em-port').value) || 587,
-        smtp_user:  document.getElementById('em-user').value.trim(),
-        smtp_pass:  document.getElementById('em-pass').value,
-        from_email: document.getElementById('em-from').value.trim(),
-        to_emails:  document.getElementById('em-to').value.trim(),
-        use_tls:    document.getElementById('em-tls').value === 'true',
+        smtp_host:  document.getElementById('smtp-host').value.trim(),
+        smtp_port:  parseInt(document.getElementById('smtp-port').value) || 587,
+        smtp_user:  document.getElementById('smtp-user').value.trim(),
+        smtp_pass:  document.getElementById('smtp-pass').value,
+        from_email: document.getElementById('smtp-from').value.trim(),
+        use_tls:    document.getElementById('smtp-tls').value === 'true',
     };
     try {
-        const r = await fetch('/api/channels/email', {
+        const r = await fetch('/api/channels/smtp', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(payload)
         });
-        if (r.ok) toast('Email SMTP guardado ✅', 'fa-envelope', '#fb923c');
-        else       toast('Error al guardar', 'fa-circle-xmark', '#ef4444');
-    } catch(e) { toast('Error de red', 'fa-circle-xmark', '#ef4444'); }
+        const j = await r.json();
+        if (r.ok && j.ok) {
+            toast('Servidor SMTP guardado ✅', 'fa-server', '#3b82f6');
+            updateSmtpPill(!!payload.smtp_host);
+        } else {
+            toast(`Error: ${j.error || 'No se pudo guardar'}`, 'fa-circle-xmark', '#ef4444');
+        }
+    } catch(e) {
+        toast('Error de red al guardar SMTP', 'fa-circle-xmark', '#ef4444');
+    }
 }
 
-// ─── Test channel ─────────────────────────────────────────────────
-async function testChannel(ch) {
-    const btnId = ch === 'telegram' ? 'tg-test-btn' : 'em-test-btn';
-    const btn   = document.getElementById(btnId);
+async function testSmtpConnection() {
+    const btn = document.getElementById('smtp-test-btn');
+    const recipientInput = document.getElementById('smtp-test-recipient');
+    const testEmail = recipientInput ? recipientInput.value.trim() : '';
+
+    if (!testEmail) {
+        toast('Ingresa un correo de prueba para validar el envío', 'fa-triangle-exclamation', '#f59e0b');
+        if (recipientInput) recipientInput.focus();
+        return;
+    }
+
     btn.disabled = true;
+    const oldHtml = btn.innerHTML;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Probando...';
+    try {
+        const r = await fetch('/api/channels/smtp/test', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ test_email: testEmail })
+        });
+        const j = await r.json();
+        if (j.ok) {
+            toast(`✅ SMTP Conectado y correo de prueba enviado a ${testEmail}`, 'fa-circle-check', '#34d399');
+            updateSmtpPill(true);
+        } else {
+            toast(`❌ Error SMTP: ${j.error}`, 'fa-circle-xmark', '#ef4444');
+        }
+    } catch(e) {
+        toast(`Error de red: ${e.message}`, 'fa-circle-xmark', '#ef4444');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = oldHtml;
+    }
+}
+
+// ─── Alertas de Monitoreo (Email) ──────────────────────────────────
+function onAlertsEmToggle() {
+    updateAlertsEmPill(document.getElementById('alerts-em-enabled').checked);
+}
+
+function updateAlertsEmPill(on) {
+    const pill = document.getElementById('alerts-em-status-pill');
+    if (!pill) return;
+    pill.textContent = on ? 'Activo' : 'Desactivado';
+    pill.className = `status-pill ${on ? 'sp-on' : 'sp-off'}`;
+}
+
+async function saveAlertEmail() {
+    const payload = {
+        enabled:   document.getElementById('alerts-em-enabled').checked,
+        to_emails: document.getElementById('alerts-em-to').value.trim(),
+    };
+    try {
+        const r = await fetch('/api/channels/email/alerts', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        const j = await r.json();
+        if (r.ok && j.ok) {
+            toast('Módulo de alertas de correo guardado ✅', 'fa-envelope-open-text', '#10b981');
+            updateAlertsEmPill(payload.enabled);
+        } else {
+            toast(`Error: ${j.error || 'No se pudo guardar'}`, 'fa-circle-xmark', '#ef4444');
+        }
+    } catch(e) {
+        toast('Error de red al guardar alertas', 'fa-circle-xmark', '#ef4444');
+    }
+}
+
+async function testAlertEmail() {
+    const btn = document.getElementById('alerts-em-test-btn');
+    btn.disabled = true;
+    const oldHtml = btn.innerHTML;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enviando...';
+    try {
+        const r = await fetch('/api/channels/email/alerts/test', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({})
+        });
+        const j = await r.json();
+        if (j.ok) {
+            const dest = (j.data?.sent_to || []).join(', ') || 'destinatarios configurados';
+            toast(`✅ Alerta de prueba enviada a ${dest}`, 'fa-circle-check', '#34d399');
+        } else {
+            toast(`❌ ${j.error}`, 'fa-circle-xmark', '#ef4444');
+        }
+    } catch(e) {
+        toast(`Error: ${e.message}`, 'fa-circle-xmark', '#ef4444');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = oldHtml;
+    }
+}
+
+// ─── Fallback Legacy Handlers ─────────────────────────────────────
+function onEmToggle() { onAlertsEmToggle(); }
+function updateEmPill(on) { updateAlertsEmPill(on); }
+async function saveEmail() {
+    await saveSmtpServer();
+    await saveAlertEmail();
+}
+async function testChannel(ch) {
+    if (ch === 'email') {
+        return testAlertEmail();
+    }
+    const btnId = 'tg-test-btn';
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    btn.disabled = true;
+    const oldHtml = btn.innerHTML;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enviando...';
     try {
         const r = await fetch(`/api/channels/${ch}/test`, { method: 'POST' });
@@ -2590,9 +2756,7 @@ async function testChannel(ch) {
         toast(`Error: ${e.message}`, 'fa-circle-xmark', '#ef4444');
     } finally {
         btn.disabled = false;
-        btn.innerHTML = ch === 'telegram'
-            ? '<i class="fas fa-paper-plane"></i> Enviar prueba'
-            : '<i class="fas fa-envelope-circle-check"></i> Enviar prueba';
+        btn.innerHTML = oldHtml;
     }
 }
 

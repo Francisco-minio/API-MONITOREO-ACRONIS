@@ -132,8 +132,12 @@ def send_telegram(message: str, force_cfg: dict = None) -> bool:
 
 # ─────────────────────────── Email SMTP ────────────────────────────────────
 
-def send_email(subject: str, html_body: str, force_cfg: dict = None) -> bool:
-    """Envía correo a todos los destinatarios configurados en DB o .env."""
+def send_email(subject: str, html_body: str, to_addrs: list = None, force_cfg: dict = None) -> bool:
+    """
+    Envía correo usando el servidor SMTP central.
+    - Si to_addrs es provisto explícitamente (ej: reportes, pruebas), envía a esa lista.
+    - Si to_addrs es None, se asume envío de alerta y verifica que alerts_enabled/enabled esté activo en DB.
+    """
     if DRY_RUN:
         print(f"[DRY_RUN] Email Subject: {subject}\n[DRY_RUN] Email Body Preview:\n{html_body[:200]}...\n")
         return True
@@ -145,52 +149,165 @@ def send_email(subject: str, html_body: str, force_cfg: dict = None) -> bool:
     user      = cfg.get('smtp_user') or SMTP_USER
     pwd       = cfg.get('smtp_pass') or SMTP_PASS
     from_addr = cfg.get('from_email') or FROM_EMAIL or user
-    to_addrs  = cfg.get('to_emails') or TO_EMAILS
     use_tls   = cfg.get('use_tls') if cfg.get('use_tls') is not None else SMTP_USE_TLS
-    enabled   = cfg.get('enabled')
 
-    if enabled is None:
-        enabled = bool(host and to_addrs)
-
-    if not enabled:
+    if not host:
+        print("[WARN] Envío de correo omitido: Servidor SMTP no configurado (falta host)")
         return False
 
-    if not host or not to_addrs:
-        print("[WARN] Email habilitado pero no configurado (SMTP Host/Destinatarios vacíos)")
+    # Determinar lista de destinatarios
+    if to_addrs is not None:
+        recipients = [a.strip() for a in to_addrs if a and a.strip()]
+    else:
+        # Envíos de alertas: verificar si el módulo de alertas está habilitado
+        is_alert_enabled = cfg.get('alerts_enabled')
+        if is_alert_enabled is None:
+            is_alert_enabled = cfg.get('enabled')
+        if is_alert_enabled is None:
+            is_alert_enabled = bool(host and cfg.get('to_emails'))
+
+        if not is_alert_enabled:
+            return False
+
+        alert_to = cfg.get('to_emails') or TO_EMAILS
+        recipients = [a.strip() for a in alert_to if a and a.strip()]
+
+    if not recipients:
+        print("[WARN] Envío de correo omitido: Lista de destinatarios vacía")
         return False
 
     try:
         msg = MIMEMultipart('alternative')
         msg['Subject'] = subject
         msg['From']    = from_addr
-        msg['To']      = ', '.join(to_addrs)
+        msg['To']      = ', '.join(recipients)
         msg.attach(MIMEText(html_body, 'html'))
 
         if port == 465:
             with smtplib.SMTP_SSL(host, port, timeout=15) as srv:
                 if user and pwd:
                     srv.login(user, pwd)
-                srv.sendmail(from_addr, to_addrs, msg.as_string())
+                srv.sendmail(from_addr, recipients, msg.as_string())
         else:
             with smtplib.SMTP(host, port, timeout=15) as srv:
                 if use_tls:
                     srv.starttls()
                 if user and pwd:
                     srv.login(user, pwd)
-                srv.sendmail(from_addr, to_addrs, msg.as_string())
+                srv.sendmail(from_addr, recipients, msg.as_string())
         return True
     except Exception as e:
         print(f"[EMAIL ERROR] {e}")
         return False
 
 
+def test_smtp_connection(test_email: str) -> dict:
+    """Prueba la conexión y autenticación con el servidor SMTP enviando un correo de diagnóstico técnico."""
+    cfg = db.get_smtp_config()
+    host = cfg.get('smtp_host') or SMTP_HOST
+    port = int(cfg.get('smtp_port') or SMTP_PORT or 587)
+    user = cfg.get('smtp_user') or SMTP_USER
+    pwd = cfg.get('smtp_pass') or SMTP_PASS
+    from_addr = cfg.get('from_email') or FROM_EMAIL or user or 'monitor@backupcode.cl'
+    use_tls = cfg.get('use_tls') if cfg.get('use_tls') is not None else SMTP_USE_TLS
+
+    if not host:
+        return {'ok': False, 'error': 'El servidor SMTP no tiene Host configurado.'}
+    if not test_email or '@' not in test_email:
+        return {'ok': False, 'error': 'Dirección de correo de prueba inválida.'}
+
+    now_str = now_chile().strftime('%d/%m/%Y %H:%M:%S')
+    subject = f"⚙️ [Diagnóstico Backupcode] Prueba de Servidor SMTP Exitosa ({now_str})"
+    html = f"""
+    <div style="font-family:Segoe UI,Helvetica,Arial,sans-serif;background:#0f172a;color:#f8fafc;padding:24px;border-radius:10px;max-width:600px;margin:0 auto;border:1px solid #334155;">
+      <h2 style="color:#10b981;margin-top:0;">✅ Conexión SMTP Exitosa</h2>
+      <p style="font-size:14px;color:#cbd5e1;">Este correo confirma que el <strong>Servidor SMTP Central</strong> configurado en Acronis Monitor está operativo y puede despachar correos correctamente.</p>
+      <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:13px;">
+        <tr style="border-bottom:1px solid #334155;"><td style="padding:6px 0;color:#94a3b8;">Servidor Host:</td><td style="padding:6px 0;font-weight:bold;color:#f8fafc;">{host}</td></tr>
+        <tr style="border-bottom:1px solid #334155;"><td style="padding:6px 0;color:#94a3b8;">Puerto:</td><td style="padding:6px 0;color:#f8fafc;">{port}</td></tr>
+        <tr style="border-bottom:1px solid #334155;"><td style="padding:6px 0;color:#94a3b8;">Usuario SMTP:</td><td style="padding:6px 0;color:#f8fafc;">{user or '(Sin usuario)'}</td></tr>
+        <tr style="border-bottom:1px solid #334155;"><td style="padding:6px 0;color:#94a3b8;">Remitente (From):</td><td style="padding:6px 0;color:#f8fafc;">{from_addr}</td></tr>
+        <tr style="border-bottom:1px solid #334155;"><td style="padding:6px 0;color:#94a3b8;">Seguridad TLS:</td><td style="padding:6px 0;color:#f8fafc;">{'STARTTLS' if use_tls else ('SSL directo' if port == 465 else 'Sin TLS')}</td></tr>
+        <tr><td style="padding:6px 0;color:#94a3b8;">Fecha y Hora:</td><td style="padding:6px 0;color:#f8fafc;">{now_str} (Chile)</td></tr>
+      </table>
+      <div style="font-size:11px;color:#64748b;margin-top:20px;border-top:1px solid #334155;padding-top:10px;">
+        Backupcode Acronis Monitor &bull; Infraestructura Central de Correo
+      </div>
+    </div>
+    """
+
+    try:
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = subject
+        msg['From']    = from_addr
+        msg['To']      = test_email
+        msg.attach(MIMEText(html, 'html'))
+
+        if port == 465:
+            with smtplib.SMTP_SSL(host, port, timeout=15) as srv:
+                if user and pwd:
+                    srv.login(user, pwd)
+                srv.sendmail(from_addr, [test_email], msg.as_string())
+        else:
+            with smtplib.SMTP(host, port, timeout=15) as srv:
+                if use_tls:
+                    srv.starttls()
+                if user and pwd:
+                    srv.login(user, pwd)
+                srv.sendmail(from_addr, [test_email], msg.as_string())
+        return {'ok': True, 'message': f'Correo de prueba enviado correctamente a {test_email}'}
+    except Exception as e:
+        return {'ok': False, 'error': f'Error de conexión SMTP: {str(e)}'}
+
+
+def send_test_alert_email(target_email: str = None) -> dict:
+    """Envía una alerta de monitoreo simulada para probar el canal de alertas."""
+    cfg = db.get_alert_email_config()
+    recipients = [target_email] if target_email else cfg.get('to_emails', [])
+    if not recipients or not recipients[0]:
+        return {'ok': False, 'error': 'No hay destinatarios de alerta configurados.'}
+
+    now_str = now_chile().strftime('%d/%m/%Y %H:%M:%S')
+    subject = "⚠️ [Alerta Acronis PRUEBA] Backup Fallido - SRV-DEMO-01 (Cliente Prueba)"
+    html = f"""
+    <div style="font-family:Segoe UI,Helvetica,Arial,sans-serif;background:#0f172a;color:#f8fafc;padding:24px;border-radius:10px;max-width:600px;margin:0 auto;border:1px solid #ef444455;">
+      <div style="margin-bottom:16px;">
+        <span style="background:#ef4444;color:#fff;padding:4px 8px;border-radius:4px;font-size:11px;font-weight:bold;">ALERTA DE PRUEBA</span>
+        <span style="color:#94a3b8;font-size:12px;margin-left:8px;">{now_str}</span>
+      </div>
+      <h3 style="color:#f8fafc;margin:0 0 10px 0;">Falla en Respaldo de Equipo (Simulada)</h3>
+      <p style="font-size:13px;color:#cbd5e1;line-height:1.5;">Esta es una notificación de prueba para comprobar el <strong>Módulo de Alertas de Monitoreo</strong>.</p>
+      <div style="background:#1e293b;border-radius:8px;padding:14px;margin:16px 0;font-size:12px;border:1px solid #334155;">
+        <p style="margin:4px 0;"><strong>Equipo:</strong> SRV-DEMO-01</p>
+        <p style="margin:4px 0;"><strong>Cliente:</strong> Cliente Demo Ltda.</p>
+        <p style="margin:4px 0;"><strong>Plan:</strong> Respaldo Servidor Diario</p>
+        <p style="margin:4px 0;"><strong>Estado:</strong> <span style="color:#ef4444;font-weight:bold;">CRITICAL</span></p>
+        <p style="margin:4px 0;"><strong>Motivo:</strong> Prueba de canal de alertas emitida manualmente desde el panel de control.</p>
+      </div>
+      <div style="font-size:11px;color:#64748b;margin-top:20px;border-top:1px solid #334155;padding-top:10px;">
+        Backupcode Acronis Monitor &bull; Canal de Alertas de Monitoreo
+      </div>
+    </div>
+    """
+    sent = send_email(subject, html, to_addrs=recipients)
+    if sent:
+        return {'ok': True, 'recipients': recipients}
+    return {'ok': False, 'error': 'No se pudo enviar el correo de alerta. Verifique la configuración del Servidor SMTP.'}
+
+
 def dispatch_notifications(vm_notify: bool, msg_tg: str, subj_em: str, html_em: str) -> bool:
-    """Envía notificaciones a través de todos los canales activos (Telegram, Email)."""
+    """Envía notificaciones a través de los canales activos (Telegram, Email de Alertas)."""
     if not vm_notify:
         return False
 
     tg_sent = send_telegram(msg_tg)
-    em_sent = send_email(subj_em, html_em)
+
+    # Verificar si alertas por email están habilitadas
+    em_cfg = db.get_alert_email_config()
+    em_sent = False
+    if em_cfg.get('enabled') and em_cfg.get('to_emails'):
+        em_sent = send_email(subj_em, html_em, to_addrs=em_cfg['to_emails'])
+
     return tg_sent or em_sent
 
 
