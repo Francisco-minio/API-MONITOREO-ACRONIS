@@ -322,19 +322,24 @@ def dispatch_notifications(vm_notify: bool, msg_tg: str, subj_em: str, html_em: 
     if em_cfg.get('enabled') and em_cfg.get('to_emails'):
         em_sent = send_email(subj_em, html_em, to_addrs=em_cfg['to_emails'])
 
-    return tg_sent or em_sent
+def get_chile_tz():
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo('America/Santiago')
+    except Exception:
+        return timezone(timedelta(hours=-3))
 
 
 def now_chile() -> datetime:
-    """Retorna la hora actual en Chile (UTC-4)."""
-    return datetime.now(timezone(timedelta(hours=-4)))
+    """Retorna la hora actual en Chile (considerando horario oficial de Santiago, verano/invierno)."""
+    return datetime.now(get_chile_tz())
 
 
 def fmt_ts(iso: Optional[str]) -> str:
     if not iso:
         return "Nunca"
     try:
-        tz_chile = timezone(timedelta(hours=-4))
+        tz_chile = get_chile_tz()
         dt = datetime.fromisoformat(iso.replace('Z', '+00:00'))
         dt_local = dt.astimezone(tz_chile)
         return dt_local.strftime('%d/%m/%Y %H:%M')
@@ -2021,10 +2026,14 @@ def check_scheduled_weekly_report():
     target_hm = cfg.get('time_utc4') or '08:00'
     today_str = now_c.strftime('%Y-%m-%d')
 
+    sent_today = cfg.get('last_sent_date') == today_str
+    print(f"  [PROGRAMADOR REPORTES] Programado: {target_day.upper()} {target_hm} | Hora actual Chile: {current_day.upper()} {current_hm} | Estado: {'Ya enviado hoy (' + today_str + ')' if sent_today else 'Pendiente'}")
+
     if current_day == target_day and current_hm >= target_hm:
-        if cfg.get('last_sent_date') != today_str:
+        if not sent_today:
             target_vms = cfg.get('selected_vm_ids')
-            print(f"\n[REPORT SCHEDULER] Disparando envío automático del reporte para {cfg.get('emails')}...")
+            vms_desc = f"{len(target_vms)} máquinas seleccionadas" if target_vms else "todos los equipos"
+            print(f"\n[REPORT SCHEDULER] 🚀 Disparando envío automático del reporte ({vms_desc}) para {cfg.get('emails')}...")
             res = send_weekly_report(recipients=cfg.get('emails'), vm_ids=target_vms)
             if res.get('ok'):
                 print(f"[REPORT SCHEDULER] ✅ Reporte enviado exitosamente a {res.get('recipients')}")

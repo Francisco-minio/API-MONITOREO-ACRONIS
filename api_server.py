@@ -151,13 +151,20 @@ def get_acronis_client():
     return _acronis_client
 
 
+def get_chile_tz():
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo('America/Santiago')
+    except Exception:
+        return timezone(timedelta(hours=-3))
+
+
 def format_local_ts(iso_str: str) -> str:
     if not iso_str:
         return ""
     try:
         dt = datetime.fromisoformat(iso_str.replace('Z', '+00:00'))
-        santiago_tz = timezone(timedelta(hours=-3))
-        dt_local = dt.astimezone(santiago_tz)
+        dt_local = dt.astimezone(get_chile_tz())
         months = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
         m_name = months[dt_local.month - 1]
         return dt_local.strftime(f"%d {m_name}, %Y, %H:%M:%S")
@@ -170,8 +177,7 @@ def format_local_hm(iso_str: str) -> str:
         return ""
     try:
         dt = datetime.fromisoformat(iso_str.replace('Z', '+00:00'))
-        santiago_tz = timezone(timedelta(hours=-3))
-        dt_local = dt.astimezone(santiago_tz)
+        dt_local = dt.astimezone(get_chile_tz())
         return dt_local.strftime("%H:%M")
     except Exception:
         return iso_str
@@ -182,8 +188,7 @@ def format_local_hms(iso_str: str) -> str:
         return ""
     try:
         dt = datetime.fromisoformat(iso_str.replace('Z', '+00:00'))
-        santiago_tz = timezone(timedelta(hours=-3))
-        dt_local = dt.astimezone(santiago_tz)
+        dt_local = dt.astimezone(get_chile_tz())
         return dt_local.strftime("%H:%M:%S")
     except Exception:
         return iso_str
