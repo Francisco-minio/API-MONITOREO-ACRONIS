@@ -34,6 +34,7 @@ import sys
 import time
 import json
 import re
+import socket
 import requests
 import smtplib
 from email.mime.text import MIMEText
@@ -58,89 +59,85 @@ SMTP_PORT             = int(os.getenv('SMTP_PORT', 587))
 SMTP_USER             = os.getenv('SMTP_USER', '')
 SMTP_PASS             = os.getenv('SMTP_PASS', '')
 FROM_EMAIL            = os.getenv('FROM_EMAIL', '')
-TO_EMAILS             = [e.strip() for e in os.getenv('TO_EMAILS', '').split(',') if e.strip()]
 SMTP_USE_TLS          = os.getenv('SMTP_USE_TLS', 'true').lower() == 'true'
+TO_EMAILS             = [e.strip() for e in os.getenv('TO_EMAILS', '').split(',') if e.strip()]
 
 CLIENT_ID             = os.getenv('ACRONIS_CLIENT_ID', '')
 CLIENT_SECRET         = os.getenv('ACRONIS_CLIENT_SECRET', '')
 DC_URL                = os.getenv('ACRONIS_DC_URL', 'https://us5-cloud.acronis.com').rstrip('/')
 
-NOTIFY_INTERVAL       = int(os.getenv('NOTIFY_INTERVAL_SECONDS', 300))
-REMIND_INTERVAL_H     = int(os.getenv('REMIND_INTERVAL_H', 6))
-BACKUP_WARN_H         = int(os.getenv('NOTIFY_BACKUP_HOURS', 25))
-BACKUP_CRIT_H         = int(os.getenv('NOTIFY_BACKUP_CRIT_HOURS', 48))
+NOTIFY_INTERVAL_SECS  = int(os.getenv('NOTIFY_INTERVAL_SECONDS', 300))
+NOTIFY_INTERVAL       = NOTIFY_INTERVAL_SECS
+REMIND_INTERVAL_H     = float(os.getenv('REMIND_INTERVAL_H', 6))
+NOTIFY_BACKUP_H       = float(os.getenv('NOTIFY_BACKUP_HOURS', 25))
+NOTIFY_BACKUP_CRIT_H  = float(os.getenv('NOTIFY_BACKUP_CRIT_HOURS', 48))
 CYBERFIT_THR          = int(os.getenv('CYBERFIT_THRESHOLD', 500))
 ACRONIS_ALERTS_ON     = os.getenv('ACRONIS_ALERTS_ENABLED', 'true').lower() == 'true'
-NOTIFY_BACKUP_SUCCESS = os.getenv('NOTIFY_BACKUP_SUCCESS', 'true').lower() == 'true'
+NOTIFY_SUCCESS_BACKUP = os.getenv('NOTIFY_SUCCESS_BACKUP', 'true').lower() == 'true'
+NOTIFY_BACKUP_SUCCESS = NOTIFY_SUCCESS_BACKUP
+BACKUP_WARN_H         = NOTIFY_BACKUP_H
+BACKUP_CRIT_H         = NOTIFY_BACKUP_CRIT_H
 DRY_RUN               = os.getenv('DRY_RUN', 'false').lower() == 'true'
 
 # ─────────────────────────── Tipos de alerta ───────────────────────────────
 
 class AlertType:
-    BACKUP_NO_RECORD   = 'BACKUP_NO_RECORD'    # nunca hizo backup
-    BACKUP_WARN        = 'BACKUP_OVERDUE_25H'  # >25h sin backup
-    BACKUP_CRIT        = 'BACKUP_OVERDUE_48H'  # >48h sin backup
-    BACKUP_SUCCESS     = 'BACKUP_SUCCESS'      # backup exitoso registrado
-    CYBERFIT_LOW       = 'CYBERFIT_LOW'
-    STATUS_CRITICAL    = 'STATUS_CRITICAL'
-    STATUS_WARNING     = 'STATUS_WARNING'
-    AM_OVERDUE         = 'ANTIMALWARE_OVERDUE'
-    # Alertas nativas Acronis
-    ACRONIS_NATIVE     = 'ACRONIS_NATIVE'
+    BACKUP_WARN      = 'BACKUP_OVERDUE_25H'
+    BACKUP_CRIT      = 'BACKUP_OVERDUE_48H'
+    BACKUP_NO_RECORD = 'BACKUP_NO_RECORD'
+    CYBERFIT_LOW     = 'CYBERFIT_LOW'
+    STATUS_CRITICAL  = 'STATUS_CRITICAL'
+    STATUS_WARNING   = 'STATUS_WARNING'
+    AM_OVERDUE       = 'ANTIMALWARE_OVERDUE'
+    NATIVE_ALERT     = 'ACRONIS_NATIVE'
+    BACKUP_SUCCESS   = 'BACKUP_SUCCESS'
 
 
 # ─────────────────────────── Telegram ──────────────────────────────────────
 
-def send_telegram(message: str, force_cfg: dict = None) -> bool:
-    """Envía mensaje a todos los chats configurados en DB."""
+def send_telegram(text: str) -> bool:
+    """Envía un mensaje formateado en HTML a los chat IDs configurados."""
     if DRY_RUN:
-        print(f"[DRY_RUN] Telegram:\n{message}\n")
+        print(f"[DRY_RUN] Telegram message:\n{text}\n")
         return True
 
-    # Obtener config de la DB si no se pasa explícitamente
-    cfg = force_cfg or db.get_channel_config('telegram')
-    token    = cfg.get('bot_token')
-    chat_ids = cfg.get('chat_ids', [])
+    cfg = db.get_channel_config('telegram')
+    token = cfg.get('bot_token') or TELEGRAM_BOT_TOKEN
+    chats = cfg.get('chat_ids') or TELEGRAM_CHAT_IDS
 
-    if not cfg.get('enabled'):
+    if not token or not chats:
         return False
 
-    if not token or not chat_ids:
-        print("[WARN] Telegram habilitado pero no configurado (Token/Chat IDs vacíos)")
-        return False
-
-    success = True
-    for chat_id in chat_ids:
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    success = False
+    for chat_id in chats:
         try:
-            r = requests.post(
-                f"https://api.telegram.org/bot{token}/sendMessage",
-                json={
-                    'chat_id':    chat_id,
-                    'text':       message,
-                    'parse_mode': 'HTML'
-                },
-                timeout=15
-            )
-            if not r.ok:
-                print(f"[TELEGRAM ERROR] chat {chat_id}: {r.status_code} {r.text[:200]}")
-                success = False
+            resp = requests.post(url, json={
+                'chat_id': chat_id,
+                'text': text,
+                'parse_mode': 'HTML',
+                'disable_web_page_preview': True
+            }, timeout=10)
+            if resp.ok:
+                success = True
+            else:
+                print(f"[TELEGRAM ERROR] chat_id={chat_id}: {resp.status_code} {resp.text}")
         except Exception as e:
-            print(f"[TELEGRAM ERROR] {e}")
-            success = False
+            print(f"[TELEGRAM EXCEPTION] chat_id={chat_id}: {e}")
     return success
 
 
 # ─────────────────────────── Email SMTP ────────────────────────────────────
 
-def send_email(subject: str, html_body: str, to_addrs: list = None, force_cfg: dict = None) -> bool:
+def send_email_detailed(subject: str, html_body: str, to_addrs: list = None, force_cfg: dict = None) -> Tuple[bool, Optional[str]]:
     """
-    Envía correo usando el servidor SMTP central.
+    Envía correo usando el servidor SMTP central y retorna (éxito: bool, error: Optional[str]).
     - Si to_addrs es provisto explícitamente (ej: reportes, pruebas), envía a esa lista.
-    - Si to_addrs es None, se asume envío de alerta y verifica que alerts_enabled/enabled esté activo en DB.
+    - Si to_addrs es None, se asume envío de alerta y verifica que alerts_enabled esté activo en DB.
     """
     if DRY_RUN:
         print(f"[DRY_RUN] Email Subject: {subject}\n[DRY_RUN] Email Body Preview:\n{html_body[:200]}...\n")
-        return True
+        return True, None
 
     cfg = force_cfg or db.get_channel_config('email')
 
@@ -148,12 +145,13 @@ def send_email(subject: str, html_body: str, to_addrs: list = None, force_cfg: d
     port      = int(cfg.get('smtp_port') or SMTP_PORT or 587)
     user      = cfg.get('smtp_user') or SMTP_USER
     pwd       = cfg.get('smtp_pass') or SMTP_PASS
-    from_addr = cfg.get('from_email') or FROM_EMAIL or user
+    from_addr = cfg.get('from_email') or FROM_EMAIL or user or 'monitor@backupcode.cl'
     use_tls   = cfg.get('use_tls') if cfg.get('use_tls') is not None else SMTP_USE_TLS
 
     if not host:
-        print("[WARN] Envío de correo omitido: Servidor SMTP no configurado (falta host)")
-        return False
+        err = "Servidor SMTP no configurado (falta Host). Ingrese a la sección Notificaciones para configurar el Servidor SMTP Central."
+        print(f"[WARN] Envío de correo omitido: {err}")
+        return False, err
 
     # Determinar lista de destinatarios
     if to_addrs is not None:
@@ -167,14 +165,15 @@ def send_email(subject: str, html_body: str, to_addrs: list = None, force_cfg: d
             is_alert_enabled = bool(host and cfg.get('to_emails'))
 
         if not is_alert_enabled:
-            return False
+            return False, "El módulo de alertas por correo está desactivado."
 
         alert_to = cfg.get('to_emails') or TO_EMAILS
         recipients = [a.strip() for a in alert_to if a and a.strip()]
 
     if not recipients:
-        print("[WARN] Envío de correo omitido: Lista de destinatarios vacía")
-        return False
+        err = "No hay correos destinatarios válidos para el envío."
+        print(f"[WARN] Envío de correo omitido: {err}")
+        return False, err
 
     try:
         msg = MIMEMultipart('alternative')
@@ -195,10 +194,25 @@ def send_email(subject: str, html_body: str, to_addrs: list = None, force_cfg: d
                 if user and pwd:
                     srv.login(user, pwd)
                 srv.sendmail(from_addr, recipients, msg.as_string())
-        return True
+        return True, None
+    except smtplib.SMTPAuthenticationError as e:
+        err_detail = e.smtp_error.decode('utf-8', errors='ignore') if hasattr(e.smtp_error, 'decode') else str(e)
+        err = f"Autenticación SMTP fallida: usuario o contraseña incorrectos ({err_detail})"
+        print(f"[EMAIL ERROR] {err}")
+        return False, err
+    except (smtplib.SMTPConnectError, ConnectionRefusedError, socket.timeout, TimeoutError) as e:
+        err = f"No se pudo conectar al servidor SMTP {host}:{port} ({str(e)})"
+        print(f"[EMAIL ERROR] {err}")
+        return False, err
     except Exception as e:
-        print(f"[EMAIL ERROR] {e}")
-        return False
+        err = f"Error del servidor SMTP: {str(e)}"
+        print(f"[EMAIL ERROR] {err}")
+        return False, err
+
+
+def send_email(subject: str, html_body: str, to_addrs: list = None, force_cfg: dict = None) -> bool:
+    success, _ = send_email_detailed(subject, html_body, to_addrs=to_addrs, force_cfg=force_cfg)
+    return success
 
 
 def test_smtp_connection(test_email: str) -> dict:
@@ -289,10 +303,10 @@ def send_test_alert_email(target_email: str = None) -> dict:
       </div>
     </div>
     """
-    sent = send_email(subject, html, to_addrs=recipients)
+    sent, err = send_email_detailed(subject, html, to_addrs=recipients)
     if sent:
         return {'ok': True, 'recipients': recipients}
-    return {'ok': False, 'error': 'No se pudo enviar el correo de alerta. Verifique la configuración del Servidor SMTP.'}
+    return {'ok': False, 'error': err or 'No se pudo enviar el correo de alerta. Verifique la configuración del Servidor SMTP.'}
 
 
 def dispatch_notifications(vm_notify: bool, msg_tg: str, subj_em: str, html_em: str) -> bool:
@@ -1962,7 +1976,11 @@ def send_weekly_report(recipients: list = None, start_iso: str = None, end_iso: 
     to_emails = recipients or cfg.get('emails') or TO_EMAILS
 
     if not to_emails:
-        return {'ok': False, 'error': 'No hay correos destinatarios configurados'}
+        return {'ok': False, 'error': 'No hay correos destinatarios configurados. Ingrese los correos en la Programación Automática.'}
+
+    smtp_cfg = db.get_smtp_config()
+    if not smtp_cfg.get('smtp_host'):
+        return {'ok': False, 'error': 'El Servidor SMTP no está configurado (falta Host). Ingrese a la vista de Notificaciones para configurarlo.'}
 
     data = generate_weekly_report_data(start_iso, end_iso, tenant_id, vm_ids=vm_ids)
     html_body = render_report_html(data)
@@ -1971,13 +1989,14 @@ def send_weekly_report(recipients: list = None, start_iso: str = None, end_iso: 
     rate_icon = "🟢" if rate >= 95 else ("🟡" if rate >= 80 else "🔴")
     subject = f"📊 [Reporte Acronis] {rate_icon} {rate:.1f}% Éxito ({data.get('total_machines')} equipos) - {data.get('period_start')}"
 
-    email_cfg = dict(db.get_channel_config('email'))
+    email_cfg = dict(smtp_cfg)
     email_cfg['to_emails'] = to_emails
     email_cfg['enabled'] = True
 
-    sent = send_email(subject, html_body, force_cfg=email_cfg)
+    sent, err = send_email_detailed(subject, html_body, to_addrs=to_emails, force_cfg=email_cfg)
     return {
         'ok': sent,
+        'error': err,
         'recipients': to_emails,
         'subject': subject,
         'report_data': data
@@ -2027,7 +2046,7 @@ def run():
 
     print(f"\n{'='*60}")
     print(f"  Acronis Notification Engine")
-    print(f"  Intervalo      : {NOTIFY_INTERVAL}s")
+    print(f"  Intervalo      : {NOTIFY_INTERVAL_SECS}s")
     print(f"  Re-notificación: cada {REMIND_INTERVAL_H}h")
     print(f"  Backup warning : >{BACKUP_WARN_H}h  |  critical: >{BACKUP_CRIT_H}h")
     print(f"  CyberFit mín   : {CYBERFIT_THR}")

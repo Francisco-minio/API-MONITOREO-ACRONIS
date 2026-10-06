@@ -245,6 +245,14 @@ class AcronisMonitor:
                 bytes_saved = prog.get('bytesSaved') or runtime.get('bytesSaved') or 0
                 speed_bps = prog.get('processingSpeed') or runtime.get('processingSpeed') or 0.0
 
+                details = item.get('details') or {}
+                if not bytes_proc:
+                    bytes_proc = details.get('bytesProcessed') or details.get('transferredBytes') or result_obj.get('bytesProcessed') or result_obj.get('transferredBytes') or 0
+                if not bytes_saved:
+                    bytes_saved = details.get('bytesSaved') or details.get('dataSize') or result_obj.get('bytesSaved') or 0
+                if not speed_bps:
+                    speed_bps = details.get('processingSpeed') or details.get('speed') or result_obj.get('processingSpeed') or 0.0
+
                 bottleneck = prog.get('bottleneck') or runtime.get('bottleneck') or {}
                 btn_source = bottleneck.get('source', 0) if isinstance(bottleneck, dict) else 0
                 btn_dest = bottleneck.get('destination', 0) if isinstance(bottleneck, dict) else 0
@@ -264,6 +272,12 @@ class AcronisMonitor:
 
                 vm_id = res.get('id') or ctx.get('resource_id') or ctx.get('id')
                 vm_name = res.get('name') or ctx.get('MachineName') or ctx.get('resource_name')
+                if vm_id:
+                    vm_id = str(vm_id).lower()
+                elif vm_name:
+                    mach_row = db.get_machine_by_id_or_name(vm_name)
+                    if mach_row and mach_row.get('vm_id'):
+                        vm_id = str(mach_row['vm_id']).lower()
                 tenant = item.get('tenant') or {}
                 tenant_id = tenant.get('id') or item.get('tenant_id') or ctx.get('tenant_id')
                 tenant_name = tenant.get('name') or ctx.get('tenant_name')
@@ -658,9 +672,10 @@ class AcronisMonitor:
                     if vm.get('last_backup_success'):
                         p_lower = (vm.get('protection_plan') or '').lower()
                         st_target = 'local_ntfs' if any(k in p_lower for k in ('[local]', 'local', 'ntfs', 'smb')) else 'cloud_acronis'
+                        base_sz = int((vm.get('backup_size_gb') or 0) * (1024**3))
                         db.insert_backup_execution({
                             'activity_id': f"base_{vm['vm_id']}_{vm['last_backup_success']}",
-                            'vm_id': vm['vm_id'],
+                            'vm_id': str(vm['vm_id']).lower(),
                             'vm_name': vm.get('name'),
                             'tenant_id': vm.get('tenant_id'),
                             'tenant_name': vm.get('tenant_name'),
@@ -668,7 +683,9 @@ class AcronisMonitor:
                             'start_time': vm.get('last_backup_success'),
                             'end_time': vm.get('last_backup_success'),
                             'result': 'success' if vm.get('protection_status') != 'critical' else 'warning',
-                            'size_bytes': int((vm.get('backup_size_gb') or 0) * (1024**3)),
+                            'size_bytes': base_sz,
+                            'bytes_processed': base_sz,
+                            'bytes_saved': base_sz,
                             'storage_target': st_target,
                             'created_at': vm.get('last_backup_success')
                         })

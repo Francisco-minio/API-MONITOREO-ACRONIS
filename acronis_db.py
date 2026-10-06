@@ -732,7 +732,7 @@ def insert_backup_execution(data: dict) -> bool:
                 task_id = excluded.task_id
         """, (
             data.get('activity_id'),
-            data.get('vm_id'),
+            str(data.get('vm_id')).lower() if data.get('vm_id') else None,
             data.get('vm_name'),
             data.get('tenant_id'),
             data.get('tenant_name'),
@@ -758,36 +758,128 @@ def insert_backup_execution(data: dict) -> bool:
         return cursor.rowcount > 0
 
 
+def get_machine_by_id_or_name(identifier: str) -> Optional[dict]:
+    """
+    Busca una máquina por su vm_id o nombre (insensible a mayúsculas/minúsculas).
+    """
+    if not identifier:
+        return None
+    with get_conn() as conn:
+        row = conn.execute("""
+            SELECT * FROM machines 
+            WHERE LOWER(vm_id) = LOWER(?) OR LOWER(name) = LOWER(?)
+            LIMIT 1
+        """, (identifier, identifier)).fetchone()
+        if not row:
+            row = conn.execute("""
+                SELECT * FROM machines 
+                WHERE LOWER(name) LIKE LOWER(?)
+                LIMIT 1
+            """, (f"{identifier}%",)).fetchone()
+        return dict(row) if row else None
+
+
 def get_activity_details(identifier: str) -> Optional[dict]:
     """
     Busca los detalles completos de una ejecución de respaldo por activity_id, id o task_id.
     """
+    if not identifier:
+        return None
     with get_conn() as conn:
         row = conn.execute("""
             SELECT * FROM backup_executions 
             WHERE activity_id = ? OR task_id = ? OR id = ?
+               OR LOWER(activity_id) = LOWER(?) OR LOWER(task_id) = LOWER(?)
             ORDER BY created_at DESC LIMIT 1
-        """, (identifier, identifier, identifier)).fetchone()
+        """, (identifier, identifier, identifier, identifier, identifier)).fetchone()
         return dict(row) if row else None
 
 
 def get_latest_activity_for_vm(vm_id_or_name: str) -> Optional[dict]:
     """
     Obtiene la última actividad registrada para una máquina virtual (prioriza actividades reales de Acronis).
+    Resuelve el ID y Nombre de la máquina para búsquedas case-insensitive y enriquece métricas vacías.
     """
+    if not vm_id_or_name:
+        return None
+
     with get_conn() as conn:
+        # 1. Resolver información de la máquina desde la tabla 'machines'
+        mach = conn.execute("""
+            SELECT vm_id, name, backup_size_gb, protection_plan, tenant_id, tenant_name, last_backup_success 
+            FROM machines 
+            WHERE LOWER(vm_id) = LOWER(?) OR LOWER(name) = LOWER(?)
+            LIMIT 1
+        """, (vm_id_or_name, vm_id_or_name)).fetchone()
+
+        m_id = mach['vm_id'] if mach else vm_id_or_name
+        m_name = mach['name'] if mach else vm_id_or_name
+
+        # 2. Buscar primero actividades reales de Acronis (excluyendo 'base_%')
         row = conn.execute("""
             SELECT * FROM backup_executions 
-            WHERE (vm_id = ? OR vm_name = ? OR vm_name LIKE ?) AND activity_id NOT LIKE 'base_%'
+            WHERE (
+                LOWER(vm_id) = LOWER(?) OR LOWER(vm_id) = LOWER(?)
+                OR LOWER(vm_name) = LOWER(?) OR LOWER(vm_name) = LOWER(?)
+            ) AND activity_id NOT LIKE 'base_%'
             ORDER BY created_at DESC LIMIT 1
-        """, (vm_id_or_name, vm_id_or_name, f"{vm_id_or_name}%")).fetchone()
+        """, (vm_id_or_name, m_id, vm_id_or_name, m_name)).fetchone()
+
+        if not row and m_name:
+            row = conn.execute("""
+                SELECT * FROM backup_executions 
+                WHERE LOWER(vm_name) LIKE LOWER(?) AND activity_id NOT LIKE 'base_%'
+                ORDER BY created_at DESC LIMIT 1
+            """, (f"{m_name}%",)).fetchone()
+
+        # 3. Si no hay actividad real registrada, buscar registro base
         if not row:
             row = conn.execute("""
                 SELECT * FROM backup_executions 
-                WHERE vm_id = ? OR vm_name = ? OR vm_name LIKE ?
+                WHERE (
+                    LOWER(vm_id) = LOWER(?) OR LOWER(vm_id) = LOWER(?)
+                    OR LOWER(vm_name) = LOWER(?) OR LOWER(vm_name) = LOWER(?)
+                )
                 ORDER BY created_at DESC LIMIT 1
-            """, (vm_id_or_name, vm_id_or_name, f"{vm_id_or_name}%")).fetchone()
-        return dict(row) if row else None
+            """, (vm_id_or_name, m_id, vm_id_or_name, m_name)).fetchone()
+
+        if row:
+            rec = dict(row)
+            # Enriquecer métricas si vienen en 0 y la máquina tiene tamaño conocido
+            if mach and (not rec.get('bytes_saved') or rec['bytes_saved'] == 0):
+                size_gb = mach['backup_size_gb'] or 0
+                if size_gb > 0:
+                    rec['bytes_saved'] = int(size_gb * (1024**3))
+                    if not rec.get('bytes_processed') or rec['bytes_processed'] == 0:
+                        rec['bytes_processed'] = rec['bytes_saved']
+            return rec
+
+        # 4. Si no hay fila en backup_executions pero existe la máquina en 'machines'
+        if mach and mach.get('last_backup_success'):
+            size_b = int((mach.get('backup_size_gb') or 0) * (1024**3))
+            p_lower = (mach.get('protection_plan') or '').lower()
+            st_target = 'local_ntfs' if any(k in p_lower for k in ('[local]', 'local', 'ntfs', 'smb')) else 'cloud_acronis'
+            return {
+                'activity_id': f"synth_{mach['vm_id']}",
+                'task_id': None,
+                'vm_id': mach['vm_id'],
+                'vm_name': mach['name'],
+                'tenant_id': mach['tenant_id'],
+                'tenant_name': mach['tenant_name'],
+                'plan_name': mach['protection_plan'],
+                'start_time': mach['last_backup_success'],
+                'end_time': mach['last_backup_success'],
+                'duration_seconds': 0,
+                'result': 'success',
+                'size_bytes': size_b,
+                'bytes_processed': size_b,
+                'bytes_saved': size_b,
+                'speed_bps': 0.0,
+                'storage_target': st_target,
+                'created_at': mach['last_backup_success']
+            }
+
+        return None
 
 
 def insert_storage_snapshot(data: dict) -> int:
@@ -956,7 +1048,7 @@ def get_backup_metrics(start_iso: str, end_iso: str, tenant_id: str = None, vm_i
                        bytes_processed, bytes_saved, speed_bps, bottleneck_source, bottleneck_dest, bottleneck_label,
                        run_mode, initiator, task_id
                 FROM backup_executions
-                WHERE (vm_id = ? OR vm_name = ?) AND activity_id NOT LIKE 'base_%'
+                WHERE (LOWER(vm_id) = LOWER(?) OR LOWER(vm_name) = LOWER(?)) AND activity_id NOT LIKE 'base_%'
                 ORDER BY created_at DESC LIMIT 1
             """, (m['vm_id'], m['name'])).fetchone()
             if not latest_exec:
@@ -965,7 +1057,7 @@ def get_backup_metrics(start_iso: str, end_iso: str, tenant_id: str = None, vm_i
                            bytes_processed, bytes_saved, speed_bps, bottleneck_source, bottleneck_dest, bottleneck_label,
                            run_mode, initiator, task_id
                     FROM backup_executions
-                    WHERE vm_id = ? OR vm_name = ?
+                    WHERE LOWER(vm_id) = LOWER(?) OR LOWER(vm_name) = LOWER(?)
                     ORDER BY created_at DESC LIMIT 1
                 """, (m['vm_id'], m['name'])).fetchone()
 

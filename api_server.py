@@ -266,6 +266,19 @@ def enrich_activity_response(rec: dict) -> dict:
     if b_proc == 0 and b_saved > 0:
         b_proc = b_saved
 
+    if b_proc == 0 and b_saved == 0:
+        vm_ref = rec.get('vm_id') or rec.get('vm_name')
+        if vm_ref:
+            try:
+                m_info = db.get_machine_by_id_or_name(vm_ref)
+                if m_info and m_info.get('backup_size_gb'):
+                    fallback_b = int(m_info['backup_size_gb'] * (1024**3))
+                    if fallback_b > 0:
+                        b_saved = fallback_b
+                        b_proc = fallback_b
+            except Exception:
+                pass
+
     reduc_pct = 0.0
     if b_proc > 0 and b_saved > 0:
         reduc_pct = round(max(0.0, (1.0 - (b_saved / b_proc)) * 100.0), 1)
@@ -724,7 +737,7 @@ def api_reports_send():
             vm_ids=vm_ids
         )
         if not result.get('ok'):
-            return error(result.get('error') or "Error enviando correo de reporte", 500)
+            return error(result.get('error') or "Error enviando correo de reporte", 400)
         return success(result)
     except Exception as e:
         return error(f"Error despachando reporte: {str(e)}", 500)
