@@ -39,6 +39,7 @@ import requests
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
 from typing import Optional, Tuple
 from datetime import datetime, timezone, timedelta
 from base64 import b64encode
@@ -129,11 +130,12 @@ def send_telegram(text: str) -> bool:
 
 # ─────────────────────────── Email SMTP ────────────────────────────────────
 
-def send_email_detailed(subject: str, html_body: str, to_addrs: list = None, force_cfg: dict = None) -> Tuple[bool, Optional[str]]:
+def send_email_detailed(subject: str, html_body: str, to_addrs: list = None, force_cfg: dict = None, attachments: list = None) -> Tuple[bool, Optional[str]]:
     """
     Envía correo usando el servidor SMTP central y retorna (éxito: bool, error: Optional[str]).
     - Si to_addrs es provisto explícitamente (ej: reportes, pruebas), envía a esa lista.
     - Si to_addrs es None, se asume envío de alerta y verifica que alerts_enabled esté activo en DB.
+    - attachments: Lista opcional de dicts [{'filename': 'reporte.pdf', 'content': bytes, 'content_type': 'application/pdf'}]
     """
     if DRY_RUN:
         print(f"[DRY_RUN] Email Subject: {subject}\n[DRY_RUN] Email Body Preview:\n{html_body[:200]}...\n")
@@ -176,11 +178,28 @@ def send_email_detailed(subject: str, html_body: str, to_addrs: list = None, for
         return False, err
 
     try:
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = subject
-        msg['From']    = from_addr
-        msg['To']      = ', '.join(recipients)
-        msg.attach(MIMEText(html_body, 'html'))
+        if attachments:
+            msg = MIMEMultipart('mixed')
+            msg['Subject'] = subject
+            msg['From']    = from_addr
+            msg['To']      = ', '.join(recipients)
+
+            body_part = MIMEMultipart('alternative')
+            body_part.attach(MIMEText(html_body, 'html', 'utf-8'))
+            msg.attach(body_part)
+
+            for att in attachments:
+                fname = att.get('filename', 'documento.pdf')
+                content = att.get('content', b'')
+                part = MIMEApplication(content, Name=fname)
+                part['Content-Disposition'] = f'attachment; filename="{fname}"'
+                msg.attach(part)
+        else:
+            msg = MIMEMultipart('alternative')
+            msg['Subject'] = subject
+            msg['From']    = from_addr
+            msg['To']      = ', '.join(recipients)
+            msg.attach(MIMEText(html_body, 'html', 'utf-8'))
 
         if port == 465:
             with smtplib.SMTP_SSL(host, port, timeout=15) as srv:
@@ -1975,8 +1994,8 @@ def generate_report_pdf(data: dict) -> bytes:
     return pdf_buffer.getvalue()
 
 
-def send_weekly_report(recipients: list = None, start_iso: str = None, end_iso: str = None, tenant_id: str = None, vm_ids: list = None) -> dict:
-    """Genera y despacha el reporte semanal por correo a los destinatarios indicados."""
+def send_weekly_report(recipients: list = None, start_iso: str = None, end_iso: str = None, tenant_id: str = None, vm_ids: list = None, attach_pdf: bool = True) -> dict:
+    """Genera y despacha el reporte semanal por correo a los destinatarios indicados, adjuntando el PDF del informe."""
     cfg = db.get_report_config()
     to_emails = recipients or cfg.get('emails') or TO_EMAILS
 
@@ -1998,13 +2017,29 @@ def send_weekly_report(recipients: list = None, start_iso: str = None, end_iso: 
     email_cfg['to_emails'] = to_emails
     email_cfg['enabled'] = True
 
-    sent, err = send_email_detailed(subject, html_body, to_addrs=to_emails, force_cfg=email_cfg)
+    attachments = []
+    if attach_pdf:
+        try:
+            pdf_bytes = generate_report_pdf(data)
+            date_clean = now_chile().strftime('%Y-%m-%d')
+            pdf_filename = f"Reporte_Respaldos_Backupcode_{date_clean}.pdf"
+            attachments.append({
+                'filename': pdf_filename,
+                'content': pdf_bytes,
+                'content_type': 'application/pdf'
+            })
+            print(f"[REPORT PDF] ✅ PDF adjunto generado con éxito: {pdf_filename} ({round(len(pdf_bytes)/1024, 1)} KB)")
+        except Exception as e:
+            print(f"[REPORT PDF] ⚠️ No se pudo generar PDF adjunto (se enviará solo HTML): {e}")
+
+    sent, err = send_email_detailed(subject, html_body, to_addrs=to_emails, force_cfg=email_cfg, attachments=attachments)
     return {
         'ok': sent,
         'error': err,
         'recipients': to_emails,
         'subject': subject,
-        'report_data': data
+        'report_data': data,
+        'pdf_attached': bool(attachments)
     }
 
 
