@@ -103,6 +103,9 @@ def send_telegram(text: str) -> bool:
         return True
 
     cfg = db.get_channel_config('telegram')
+    if 'enabled' in cfg and not cfg.get('enabled'):
+        return False
+
     token = cfg.get('bot_token') or TELEGRAM_BOT_TOKEN
     chats = cfg.get('chat_ids') or TELEGRAM_CHAT_IDS
 
@@ -340,6 +343,8 @@ def dispatch_notifications(vm_notify: bool, msg_tg: str, subj_em: str, html_em: 
     em_sent = False
     if em_cfg.get('enabled') and em_cfg.get('to_emails'):
         em_sent = send_email(subj_em, html_em, to_addrs=em_cfg['to_emails'])
+
+    return tg_sent or em_sent
 
 def get_chile_tz():
     try:
@@ -731,10 +736,13 @@ def check_own_rules(machines: list, now_iso: str) -> int:
                 sub_em, html_em = msg_email_backup_no_record(vm)
                 dispatch_notifications(notify, msg_backup_no_record(vm), sub_em, html_em)
                 sent += 1
-        else:
-            if db.resolve_notification(vm_id, AlertType.BACKUP_NO_RECORD, now_iso):
-                sub_em, html_em = msg_email_resolved(vm_name, tenant, AlertType.BACKUP_NO_RECORD, now_iso)
-                dispatch_notifications(notify, msg_resolved(vm_name, tenant, AlertType.BACKUP_NO_RECORD, now_iso), sub_em, html_em)
+        elif has_backup:
+            # Solo resolver si efectivamente ya cuenta con backup registrado
+            existing = db.get_active_notification(vm_id, AlertType.BACKUP_NO_RECORD)
+            if existing and db.resolve_notification(vm_id, AlertType.BACKUP_NO_RECORD, now_iso):
+                sub_em, html_em = msg_email_resolved(vm_name, tenant, AlertType.BACKUP_NO_RECORD, existing['first_sent'])
+                dispatch_notifications(notify, msg_resolved(vm_name, tenant, AlertType.BACKUP_NO_RECORD, existing['first_sent']), sub_em, html_em)
+                sent += 1
 
         # ── 2. Backup atrasado ──────────────────────────────────────────────
         hours = hours_since(vm.get('last_backup_success'))
@@ -785,20 +793,36 @@ def check_own_rules(machines: list, now_iso: str) -> int:
                 dispatch_notifications(notify, msg_resolved(vm_name, tenant, AlertType.CYBERFIT_LOW, existing['first_sent']), sub_em, html_em)
                 sent += 1
 
-        # ── 4. Estado crítico / warning ────────────────────────────────────
+        # ── 4. Estado crítico / warning (Anti-Flapping) ────────────────────
         pstatus = (vm.get('protection_status') or '').lower()
-        for at, sev, st in [
-            (AlertType.STATUS_CRITICAL, 'critical', 'critical'),
-            (AlertType.STATUS_WARNING,  'warning',  'warning'),
-        ]:
-            if pstatus == st:
-                snd, esc = should_send(vm_id, at, sev, now_iso)
-                if snd:
-                    db.upsert_notification(vm_id, vm_name, tenant, at, sev, now_iso)
-                    sub_em, html_em = msg_email_status(vm)
-                    dispatch_notifications(notify, msg_status(vm), sub_em, html_em)
-                    sent += 1
-            else:
+        HEALTHY_STATUSES = ('ok', 'good', 'normal', 'protected')
+
+        if pstatus == 'critical':
+            snd, esc = should_send(vm_id, AlertType.STATUS_CRITICAL, 'critical', now_iso)
+            if snd:
+                db.upsert_notification(vm_id, vm_name, tenant, AlertType.STATUS_CRITICAL, 'critical', now_iso)
+                sub_em, html_em = msg_email_status(vm)
+                dispatch_notifications(notify, msg_status(vm), sub_em, html_em)
+                sent += 1
+            # Si subió a critical, silenciar warning previo
+            db.resolve_notification(vm_id, AlertType.STATUS_WARNING, now_iso)
+
+        elif pstatus == 'warning':
+            snd, esc = should_send(vm_id, AlertType.STATUS_WARNING, 'warning', now_iso)
+            if snd:
+                db.upsert_notification(vm_id, vm_name, tenant, AlertType.STATUS_WARNING, 'warning', now_iso)
+                sub_em, html_em = msg_email_status(vm)
+                dispatch_notifications(notify, msg_status(vm), sub_em, html_em)
+                sent += 1
+            # Si bajó de critical a warning, resolver critical previo
+            existing_crit = db.get_active_notification(vm_id, AlertType.STATUS_CRITICAL)
+            if existing_crit and db.resolve_notification(vm_id, AlertType.STATUS_CRITICAL, now_iso):
+                sub_em, html_em = msg_email_resolved(vm_name, tenant, AlertType.STATUS_CRITICAL, existing_crit['first_sent'])
+                dispatch_notifications(notify, msg_resolved(vm_name, tenant, AlertType.STATUS_CRITICAL, existing_crit['first_sent']), sub_em, html_em)
+
+        elif pstatus in HEALTHY_STATUSES:
+            # Solo resolver cuando el estado es genuinamente saludable (evita falsas resoluciones en 'running', 'idle', 'unknown')
+            for at in (AlertType.STATUS_CRITICAL, AlertType.STATUS_WARNING):
                 existing = db.get_active_notification(vm_id, at)
                 if existing and db.resolve_notification(vm_id, at, now_iso):
                     sub_em, html_em = msg_email_resolved(vm_name, tenant, at, existing['first_sent'])
